@@ -176,6 +176,14 @@
       <div class="panetitle"><div><h2>Settings <span class="info" data-help="settings">i</span></h2>
         <p class="muted small" id="settingsSub"></p></div></div>
     <div class="cardgrid" id="cards">
+      <section class="tcard" id="cardFps">
+        <h3><span class="tci">⏱</span>Frame rate</h3>
+        <div class="inline">
+          <input type="number" id="s_fps" min="1" max="240" step="1"> frames per second
+          <span class="info" data-help="fps">i</span>
+        </div>
+        <div class="how" id="howFps"></div>
+      </section>
 
       <section class="tcard" id="cardCrop">
         <h3><span class="tci">✂️</span>Crop</h3>
@@ -255,15 +263,6 @@
         </details>
       </section>
 
-      <section class="tcard" id="cardFps">
-        <h3><span class="tci">⏱</span>Frame rate</h3>
-        <div class="inline">
-          <input type="number" id="s_fps" min="1" max="240" step="1"> frames per second
-          <span class="info" data-help="fps">i</span>
-        </div>
-        <div class="how" id="howFps"></div>
-      </section>
-
       <section class="tcard" id="cardOutput">
         <h3><span class="tci">💾</span>Save to</h3>
         <div class="inline outdir">
@@ -296,7 +295,6 @@
         </details>
       </section>
     </div>
-
     </div>
   </section>
 

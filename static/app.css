@@ -132,7 +132,14 @@ button.update { background: #fff4d6; border-color: #f0c040; color: #7a5300; font
 .badge.prev { background: #fff1d6; color: #8a5a00; }
 .note { background: #fff8e6; border: 1px solid #f3d58a; border-radius: 11px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; }
 /* settings step */
-.cardgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+/* settings step: one full-width row per task, in the order they are applied; settings left, "How it's done" right */
+.cardgrid { display: flex; flex-direction: column; gap: 12px; }
+.cardgrid .tcard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 28px; align-items: start; padding: 14px 18px; }
+.cardgrid .tcard > * { grid-column: 1; }
+.cardgrid .tcard > h3 { grid-column: 1 / -1; }
+.cardgrid .tcard > .how { grid-column: 2; grid-row: 2 / span 12; margin-top: 0; align-self: start; }
+.cardgrid .tcard select, .cardgrid .seg.full { max-width: 420px; }
+@media (max-width: 900px) { .cardgrid .tcard { grid-template-columns: 1fr; } .cardgrid .tcard > .how { grid-column: 1; grid-row: auto; margin-top: 10px; } }
 /* process step */
 .review { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .rline { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border-radius: 11px; background: #f6f8fb; }

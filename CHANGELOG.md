@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.2
+- *Settings* step: cleaner layout – one full-width row per task in the order they are applied (Frame rate → Crop →
+  Resize → Save to), settings on the left and *How it's done* on the right.
+
 ## 1.7.1
 - *Draw areas*: the button under the picture always shows the one useful action – disabled until the area is complete,
   **Save area · next file** when there is something to save, **Next file without area** when this file is done, and it
