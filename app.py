@@ -750,12 +750,38 @@ def startup_update(open_browser: bool):
 
 
 # ============================================================================ start
-def already_running(port) -> bool:
+def running_version(port) -> str | None:
+    """Version of the CropKit already running on this port (None if none)."""
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/ping", timeout=1) as r:
-            return json.loads(r.read()).get("app") == "CropKit"
+            d = json.loads(r.read())
+            return d.get("version") or "?" if d.get("app") == "CropKit" else None
+    except Exception:
+        return None
+
+
+def already_running(port) -> bool:
+    return running_version(port) is not None
+
+
+def stop_old_version(port) -> bool:
+    """An older CropKit (started before an update, e.g. in the background by the app icon) is still running:
+    stop it, so this new version can take over. Not while it is processing files."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/jobs", timeout=2) as r:
+            if json.loads(r.read()).get("busy"):
+                print("  An older CropKit is still processing files – it keeps running until they are done.")
+                return False
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/quit", data=b"{}", method="POST",
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=3).read()
     except Exception:
         return False
+    for _ in range(50):
+        if port_free(port):
+            return True
+        time.sleep(0.2)
+    return False
 
 
 def port_free(port) -> bool:
@@ -774,7 +800,12 @@ def main():
             if port_free(a.port):
                 break
             time.sleep(0.2)
-    if already_running(a.port):
+    old = running_version(a.port)
+    if old and old != VERSION:
+        print(f"  CropKit {old} is still running – replacing it with {VERSION}...")
+        if stop_old_version(a.port):
+            old = None
+    if old:
         print(f"CropKit is already running - opening {url}")
         if not a.no_browser:
             open_ui(url)

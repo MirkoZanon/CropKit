@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.1
+- Fix: after an update, an older CropKit still running in the background (started by the app icon) kept answering, so new
+  buttons failed with "404 Not Found". Starting CropKit now replaces an older running version automatically, and the window
+  shows a **Restart CropKit** button if it ever talks to an outdated one.
+
 ## 1.4.0
 - **Install CropKit as a real app** (⚙ Settings → *Install CropKit as an app*, with Chrome, Edge or Brave): its own icon in the
   Dock / taskbar, its own window and *Quit* in its menu – and your browser no longer opens together with CropKit.

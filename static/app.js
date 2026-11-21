@@ -9,8 +9,33 @@ async function api(path, body, method) {
   const r = await fetch(path, opt);
   let data = {};
   try { data = await r.json(); } catch (_) { /* empty */ }
+  // an /api/ route the running program doesn't have (its answer is the generic "404 Not Found: The requested URL…")
+  if (r.status === 404 && path.startsWith("/api/") && (!data.error || /^404 Not Found/.test(data.error))) {
+    needsRestart(); throw new Error("CropKit was updated while it was running – please restart it.");
+  }
   if (!r.ok) throw new Error(data.error || `${r.status} ${r.statusText}`);
   return data;
+}
+// The program running is older than the files on disk (CropKit was updated while it was running):
+// a function of the page doesn't exist in it yet. Offer a restart instead of a confusing "404".
+function needsRestart() {
+  if (document.getElementById("restartBar")) return;
+  const bar = document.createElement("div");
+  bar.id = "restartBar"; bar.className = "restartbar";
+  bar.innerHTML = `<b>CropKit was updated while it was running.</b> Restart it to use the new version.
+    <button class="primary" id="btnRestartNow">↻ Restart CropKit</button>`;
+  document.body.appendChild(bar);
+  document.getElementById("btnRestartNow").onclick = async () => {
+    bar.innerHTML = "Restarting… this window reloads by itself.";
+    try { await fetch("/api/update/restart", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); }
+    catch (_) { /* already going down */ }
+    let down = false;
+    const iv = setInterval(async () => {
+      try { await fetch("/api/ping", { cache: "no-store" }); if (down) { clearInterval(iv); location.reload(); } }
+      catch (_) { down = true; }
+    }, 800);
+    setTimeout(() => { clearInterval(iv); location.reload(); }, 15000);
+  };
 }
 const qs = (o) => new URLSearchParams(o).toString();
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
