@@ -269,6 +269,16 @@ def save_rois(folder, rois: dict):
 
 
 # ============================================================================ sizes & masks
+# ---------------------------------------------------------------------------- how pixels are resampled
+# The same method for images and videos, so results are comparable:
+#   shrinking  -> "area" averaging: each new pixel is the plain average of the original pixels it covers
+#                 (no sharpening, no added detail, no aliasing)
+#   enlarging  -> bicubic interpolation: new pixels are estimated from the 4 x 4 nearest original pixels
+def resample_method(src_wh, dst_wh) -> str:
+    """'area' when the picture gets smaller (or stays the same size), 'bicubic' when it gets bigger."""
+    return "area" if dst_wh[0] * dst_wh[1] <= src_wh[0] * src_wh[1] else "bicubic"
+
+
 def _even_floor(x) -> int:
     return max(2, int(x) // 2 * 2)
 
@@ -396,7 +406,9 @@ def process_image(src, dst, roi, size, canvas, background="black", quality=92, p
     im = ImageOps.exif_transpose(Image.open(src)).convert("RGBA")
     x0, y0, w, h = crop_box(roi)
     crop = im.crop((x0, y0, x0 + w, y0 + h))           # beyond the image -> transparent
-    crop = crop.convert("RGBa").resize(tuple(size), Image.LANCZOS).convert("RGBA")
+    method = Image.BOX if resample_method((w, h), size) == "area" else Image.BICUBIC   # BOX = area averaging
+    if tuple(size) != (w, h):
+        crop = crop.convert("RGBa").resize(tuple(size), method).convert("RGBA")
     mask = roi_inside_mask(roi, size, clip_frame=False)
     alpha = crop.getchannel("A")
     if mask is not None:
@@ -472,7 +484,9 @@ def build_filter(roi, size, canvas, fps, masked, background, after_fps=None, pix
         y0 += p
     if (x0, y0, w, h) != (0, 0, W, H):
         chain.append(f"crop={w}:{h}:{x0}:{y0}")
-    chain += [f"scale={sw}:{sh}:flags=area", "setsar=1", "format=yuv444p" if transparent else "format=yuv420p"]
+    if (sw, sh) != (w, h):
+        chain.append(f"scale={sw}:{sh}:flags={resample_method((w, h), (sw, sh))}")
+    chain += ["setsar=1", "format=yuv444p" if transparent else "format=yuv420p"]
     fmt = "yuva444p" if transparent else "yuv420p"
     tail = []
     fw, fh = (sw, sh)

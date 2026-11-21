@@ -167,6 +167,7 @@
             <label title="any colour"><input type="radio" name="bg" value="custom"><input type="color" id="bgColor" value="#3060a0">colour</label>
           </div>
         </fieldset>
+        <div class="how" id="howCrop"></div>
         <details class="more">
           <summary>More options</summary>
           <div id="transpOpts">
@@ -220,6 +221,7 @@
           <input type="number" id="s_percent" min="1" max="1000" step="1"> % <span class="small muted">(50 = half)</span>
         </div>
         <p class="small muted hint" id="resizeHint"></p>
+        <div class="how" id="howResize"></div>
         <details class="more fitopts">
           <summary>More options</summary>
           <label class="chk row"><input type="checkbox" id="s_allow_upscale"> Also enlarge smaller pictures
@@ -238,6 +240,7 @@
           <input type="number" id="s_fps" min="1" max="240" step="1"> frames per second
           <span class="info" data-help="fps">i</span>
         </div>
+        <div class="how" id="howFps"></div>
       </section>
 
       <section class="tcard" id="cardOutput">
@@ -247,6 +250,7 @@
           <button id="btnPickOut" class="icon" title="Choose another folder">📁</button>
         </div>
         <input type="hidden" id="s_output_dir">
+        <div class="how" id="howSave"></div>
         <details class="more">
           <summary>More options</summary>
           <label class="chk row"><input type="checkbox" id="s_uniform"> All results the same size

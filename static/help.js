@@ -55,8 +55,9 @@ window.INFO = {
     MP4 and JPEG can't store transparency, so transparent videos become <b>.mov</b> or <b>.webm</b> and images <b>.png</b>.</p>`,
   transparent_format: `<p><b>.mov (ProRes 4444)</b>: opens in Keynote, Final Cut, Premiere, After Effects, DaVinci. Large files, top quality.</p>
     <p><b>.webm (VP9)</b>: for web pages and browsers; small files. Not supported by Keynote.</p>`,
-  fps: `<p>Frames per second of the new videos. Extra frames are simply dropped (e.g. 60 → 10 keeps every 6th frame);
-    videos that already have fewer frames are not changed.</p><p>For position tracking 10–15 fps is usually enough.</p>`,
+  fps: `<p>Frames per second of the new videos. Frames are only <b>picked</b> – the one closest to every 1/fps second – never
+    blended (e.g. 60 → 10 keeps every 6th frame). Videos that already have fewer frames are not changed.</p>
+    <p>For position tracking 10–15 fps is usually enough.</p>`,
   crf: `<p>MP4 quality (x264 "CRF"): <b>lower = better quality, bigger files</b>. 18 is visually lossless, 20 is a good default,
     23–26 gives small files.</p>`,
   audio: `<p>Copy the sound track into the new videos. Off by default (not needed for tracking).</p>`,
@@ -125,6 +126,42 @@ window.HELP = [
       <li><b>Only frame rate</b>: 10 fps, picture unchanged.</li>
       <li><b>Half size</b>: all images and videos at 50 %.</li>
     </ul>`],
+  ["What happens to your pictures", `
+    <p>CropKit changes only what you ask for. Each card in <b>Result</b> shows a live <i>How it's done</i> note for the file you
+    are looking at; here is the full picture.</p>
+    <h3>✂️ Crop</h3>
+    <p>Pixels inside the area are <b>copied exactly</b> – no resampling, no smoothing. Only the outline of a circle or polygon is
+    softened over about 1 pixel (anti-aliasing), so the edge isn't jagged. Everything outside becomes the background colour
+    (or transparent). The crop rectangle starts on an even pixel (needed by video colour formats), so it can be shifted by at
+    most 1 pixel; the exact numbers are saved in <code>processing_params.json</code>.</p>
+    <h3>⤡ Resize</h3>
+    <ul>
+      <li><b>Shrinking → area averaging.</b> Each new pixel is the plain average of the original pixels it covers: 3840 × 2160 →
+        1280 × 720 means each new pixel is the mean of a 3 × 3 block (9 original pixels). No sharpening, no extra smoothing,
+        nothing is invented; details smaller than one new pixel are averaged away. This avoids the jagged lines and flicker
+        (aliasing) of simply skipping pixels.</li>
+      <li><b>Enlarging → bicubic interpolation.</b> New pixels are estimated from the 4 × 4 nearest original pixels: the picture
+        gets bigger but gains no real detail.</li>
+      <li><b>Exact size:</b> <i>add borders</i> keeps everything; <i>fill the frame</i> cuts what sticks out; <i>stretch</i> scales width
+        and height differently, so shapes are distorted.</li>
+      <li>Images and videos use exactly the same methods.</li>
+    </ul>
+    <h3>⏱ Frame rate</h3>
+    <p>Frames are only <b>picked, never blended or interpolated</b>. For every 1/fps second the original frame closest to that
+    moment is kept; the others are dropped. 60 → 10 fps keeps every 6th frame; 60 → 30 every 2nd; 60 → 25 alternates gaps
+    of 2 and 3 frames so the timing stays right. The kept frames are unchanged and the video lasts exactly as long as before.
+    A video that already has fewer frames per second than you ask for is left as it is.</p>
+    <h3>💾 Saving</h3>
+    <ul>
+      <li><b>MP4 (H.264)</b>: the video is encoded once, at the quality you choose (CRF, default 20): a slight compression loss,
+        hard to see at 20 or lower. Colour is stored at half resolution (4:2:0), as in almost every video.</li>
+      <li><b>.mov (ProRes 4444)</b> for transparent videos: practically lossless, full colour. <b>.webm (VP9)</b>: compressed.</li>
+      <li>Images: <b>PNG / TIFF</b> lossless; <b>JPEG / WebP</b> slightly lossy at the chosen quality.</li>
+      <li>Sound is removed unless you keep it. No colour correction, denoising or sharpening is ever applied.</li>
+      <li>All steps run in a single pass, so the picture is compressed only once.</li>
+    </ul>
+    <p class="tip">Want to check? Each output folder has <code>processing_params.json</code> with, for every file, the crop, the scale,
+    the resampling method and the frame selection used.</p>`],
   ["Use as an app", `
     <p>In <b>⚙ Settings</b>, <b>Install CropKit as an app</b> makes CropKit a real app on your computer (Chrome, Edge or Brave
     needed – they do the installing):</p>

@@ -129,6 +129,17 @@ keep), crop before resize (exact area, no work on pixels that are thrown away), 
 
 Settings are remembered in `~/.cropkit/settings.json`.
 
+### What happens to your pictures
+- **Crop**: pixels inside the area are copied exactly (no resampling); only the outline of a circle/polygon is softened over
+  ~1 px. Outside = background colour or transparent.
+- **Resize**: shrinking uses **area averaging** (each new pixel = plain average of the original pixels it covers – no
+  sharpening, nothing invented); enlarging uses **bicubic** interpolation. Same method for images and videos.
+- **Frame rate**: frames are **picked, never blended** – the original frame nearest to every 1/fps second is kept
+  (60 → 10 fps keeps every 6th frame); kept frames are unchanged and the duration stays the same.
+- **Saving**: videos are encoded once (H.264 at the chosen quality, 4:2:0 colour; ProRes 4444 / VP9 when transparent);
+  images PNG/TIFF lossless, JPEG/WebP slightly lossy. No colour correction, denoising or sharpening.
+The app shows this live in a *How it's done* note in each card, with the numbers of the file you are looking at.
+
 ## 5. Output files
 
 In the output folder:

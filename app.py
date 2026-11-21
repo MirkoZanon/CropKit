@@ -544,6 +544,11 @@ def _write_params(folder, out_dir, jobs, s):
             roi_size_out_px=[sw, sh], scale_out_per_in=[sw / w, sh / h],
             roi_offset_out_px=[ox, oy], output_size=[cw, ch],
             fps=j["fps"] if j["kind"] == "video" else None, background=s["background"],
+            resampling=("none (pixels copied)" if (sw, sh) == (w, h) else
+                        "area averaging (each new pixel = mean of the original pixels it covers)"
+                        if media.resample_method((w, h), (sw, sh)) == "area" else "bicubic interpolation (enlarged)"),
+            frame_selection=(f"nearest original frame to every 1/{j['fps']:g} s; no blending or interpolation"
+                             if j["kind"] == "video" and j["fps"] else None),
             processed=time.strftime("%Y-%m-%d %H:%M:%S"))
     params["how_to_map_back"] = ("x_original = (x_output - roi_offset_out_px[0]) / scale_out_per_in[0] + "
                                  "crop_origin_in_px[0]   (same for y with index 1)")

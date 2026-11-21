@@ -174,6 +174,87 @@ function draw() {
   updateStatus(roi);
 }
 
+// ---------------------------------------------------------------- "How it's done" notes
+// Plain-language description of exactly what happens to the pixels and frames (matches media.py).
+const fmtN = (x) => (Math.abs(x - Math.round(x)) < 0.05 ? String(Math.round(x)) : x.toFixed(1));
+function currentSourceBox() {
+  // size of the picture that goes into the resize step: the crop box, or the whole frame
+  if (!S.info || !S.W) return null;
+  const roi = cropOn() ? roiFromPoints(S.shape, S.pts) : null;
+  if (!roi || roi.shape === "full") return [S.W, S.H];
+  if (roi.shape === "circle") return [2 * roi.r, 2 * roi.r];
+  const xs = roi.shape === "polygon" ? roi.pts.map((p) => p[0]) : [roi.x0, roi.x1];
+  const ys = roi.shape === "polygon" ? roi.pts.map((p) => p[1]) : [roi.y0, roi.y1];
+  return [Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)];
+}
+function plannedSize(w, h, s) {
+  if (s.resize_mode === "percent") return [w * s.percent / 100, h * s.percent / 100];
+  if (s.resize_mode === "exact") {
+    if (s.exact_fit === "stretch") return [s.out_w, s.out_h];
+    const k = s.exact_fit === "fill" ? Math.max(s.out_w / w, s.out_h / h) : Math.min(s.out_w / w, s.out_h / h);
+    return [w * k, h * k];
+  }
+  let k = Math.min(s.out_w / w, s.out_h / h);
+  if (!s.allow_upscale) k = Math.min(k, 1);
+  return [w * k, h * k];
+}
+const HT = (t) => `<b class="ht">How it's done</b>${t}`;
+function explain() {
+  const s = S.settings; if (!s) return;
+  const t = s.tasks, isVideo = S.info && S.info.kind === "video";
+  // crop
+  const outside = s.background === "transparent" ? "transparent" : `filled with ${esc(s.background)}`;
+  $("#howCrop").innerHTML = HT(`Pixels inside the area are <b>copied exactly</b> – not resampled, not smoothed. Only the outline of a
+    circle or polygon is softened over about 1 pixel, so it isn't jagged. Everything outside is ${outside}.`);
+  // resize
+  const box = currentSourceBox();
+  let r = "";
+  if (box) {
+    const [w, h] = box, [sw, sh] = plannedSize(w, h, s), kx = w / sw, ky = h / sh;
+    const ex = `${Math.round(w)} × ${Math.round(h)} → ${Math.round(sw)} × ${Math.round(sh)} px`;
+    if (Math.abs(sw - w) < 1 && Math.abs(sh - h) < 1) r = `This file keeps its size (${ex}): pixels are copied unchanged.`;
+    else if (sw * sh <= w * h) r = `<b>Area averaging</b>: each new pixel is the plain average of the original pixels it covers –
+      here about ${fmtN(kx)} × ${fmtN(ky)} = ${fmtN(kx * ky)} original pixels per new pixel (${ex}). No sharpening, no extra
+      smoothing, no detail is invented; fine detail smaller than one new pixel is averaged away.`;
+    else r = `<b>Bicubic interpolation</b>: the picture is enlarged (${ex}); each new pixel is estimated from the 4 × 4 nearest
+      original pixels. It gets bigger but gains no real detail, so it looks slightly soft.`;
+    if (s.resize_mode === "exact" && s.exact_fit === "fill") r += " The parts that stick out of the frame are cut off.";
+    if (s.resize_mode === "exact" && s.exact_fit === "stretch" && Math.abs(kx - ky) > 0.01)
+      r += ` Width and height are scaled differently (÷${fmtN(kx)} and ÷${fmtN(ky)}), so shapes are distorted.`;
+    if (s.resize_mode === "exact" && s.exact_fit === "pad") r += " Empty sides become borders in the background colour.";
+  } else {
+    r = `Shrinking: <b>area averaging</b> – each new pixel is the plain average of the original pixels it covers (no sharpening,
+      nothing invented). Enlarging: <b>bicubic interpolation</b> from the 4 × 4 nearest pixels.`;
+  }
+  $("#howResize").innerHTML = HT(r + " Images and videos are treated the same way.");
+  // frame rate
+  let f;
+  const src = isVideo ? S.info.fps : null, tgt = +s.fps || 0;
+  if (src && tgt && tgt >= src - 0.01) f = `This video already has ${fmtN(src)} fps – its frames are kept as they are.`;
+  else {
+    const ratio = src && tgt ? src / tgt : null;
+    f = `Frames are only <b>picked, never blended or interpolated</b>: for every 1/${fmtN(tgt)} s, the original frame closest to that
+      moment is kept and the others are dropped` + (ratio ? ` – here about 1 of every ${fmtN(ratio)} frames (${fmtN(src)} → ${fmtN(tgt)} fps)` : "") +
+      `. Kept frames are not changed and the video lasts exactly as long as before.`;
+    if (ratio && Math.abs(ratio - Math.round(ratio)) > 0.05)
+      f += ` Because ${fmtN(src)} ÷ ${fmtN(tgt)} isn't a whole number, the gap between kept frames alternates (e.g. ${Math.floor(ratio)}, ${Math.ceil(ratio)}, ${Math.floor(ratio)}…) so the timing stays right.`;
+    if (!isVideo) f += " (Select a video to see its numbers.)";
+  }
+  $("#howFps").innerHTML = HT(f);
+  // saving
+  const tr = s.background === "transparent";
+  const vid = tr ? (s.transparent_video_format === "mov"
+      ? "Videos are saved as <b>ProRes 4444 (.mov)</b>: practically lossless, full colour, transparency kept (big files)."
+      : "Videos are saved as <b>VP9 (.webm)</b>: compressed (slight loss), transparency kept.")
+    : `Videos are re-encoded once as <b>H.264 (MP4)</b> at quality ${s.crf}: a slight compression loss (hard to see at 20 or
+       lower) and colour stored at half resolution (4:2:0, as in almost every video).`;
+  const fmt = s.image_format === "same" ? "in their original type" : "as " + s.image_format.toUpperCase();
+  const lossy = ["jpg", "webp"].includes(s.image_format) ? ` – slightly lossy (quality ${s.jpeg_quality})`
+    : s.image_format === "same" ? " (PNG/TIFF lossless, JPEG/WebP at quality " + s.jpeg_quality + ")" : " – lossless";
+  $("#howSave").innerHTML = HT(`${vid} ${s.audio ? "Sound is kept (re-encoded)." : "Sound is removed."} Images are saved ${fmt}${lossy}.
+    Nothing else is changed: no colour correction, no denoising, no sharpening. Your original files are never touched.`);
+}
+
 function updateStepHint() {
   const t = T(), n = S.files.length, drawn = S.files.filter((f) => f.roi).length;
   if (t.crop) {
@@ -187,6 +268,7 @@ function updateStepHint() {
   }
 }
 function updateStatus(roi = roiFromPoints(S.shape, S.pts)) {
+  explain();
   const f = S.files[S.cur];
   if (!f) { $("#hud").textContent = ""; $("#status").innerHTML = "—"; return; }
   if (!cropOn()) {
@@ -591,6 +673,7 @@ function fillSettings(s) {
     : m === "exact" ? `Every result is exactly ${s.out_w} × ${s.out_h} px.`
     : `Shrunk to fit inside ${s.out_w} × ${s.out_h} px, proportions kept` + (s.allow_upscale ? "." : " (smaller pictures stay as they are).");
   applyTasks();
+  explain();
 }
 function collectSettings() {
   const s = {};

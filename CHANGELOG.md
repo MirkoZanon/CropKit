@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.0
+- **"How it's done"** notes in every Result card, live for the file you are looking at: exactly what happens to the pixels
+  and frames (e.g. "about 1 of every 6 frames is kept (60 → 10 fps), never blended", "each new pixel is the average of
+  3 × 3 original pixels"). Full explanation in Help → *What happens to your pictures*.
+- Images and videos are now resized with exactly the same methods: **area averaging** when shrinking, **bicubic** when
+  enlarging (images used Lanczos before). Files that keep their size are not resampled at all.
+- `processing_params.json` also records the resampling method and the frame selection used for each file.
+- All action buttons are blue.
+
 ## 1.4.1
 - Fix: after an update, an older CropKit still running in the background (started by the app icon) kept answering, so new
   buttons failed with "404 Not Found". Starting CropKit now replaces an older running version automatically, and the window

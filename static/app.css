@@ -21,8 +21,8 @@ button:hover { background: #f2f4f7; }
 button:disabled { opacity: .45; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 button.primary:hover { background: #255dc2; }
-button.go { background: var(--go); border-color: var(--go); color: #fff; font-weight: 650; }
-button.go:hover { background: #18834a; }
+button.go { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 650; }   /* one colour for actions */
+button.go:hover { background: #255dc2; }
 button.big { font-size: 15.5px; padding: 10px 22px; border-radius: 11px; }
 button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
@@ -247,3 +247,9 @@ label.row { display: flex; align-items: center; gap: 7px; margin: 8px 0; }
 
 .restartbar { position: fixed; left: 50%; top: 66px; transform: translateX(-50%); z-index: 80; display: flex; gap: 14px; align-items: center;
   background: #fff4d6; border: 1px solid #f0c040; color: #5c3f00; padding: 10px 14px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.15); }
+
+/* "How it's done": what exactly happens to the pixels / frames */
+.how { margin-top: 10px; padding: 8px 10px; border-radius: 9px; background: #f3f7ff; border-left: 3px solid var(--accent);
+  font-size: 12.3px; line-height: 1.45; color: #34405a; }
+.how:empty { display: none; }
+.how b.ht { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); margin-bottom: 2px; }
