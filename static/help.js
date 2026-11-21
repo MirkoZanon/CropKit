@@ -15,8 +15,8 @@ window.INFO = {
     <b>⑤ save</b> – encoded once (no quality loss from saving several times).</p>`,
   preview: `<p>Crop is off, so there is nothing to draw: this is just a preview of each file (scroll to zoom, drag to move).</p>
     <p>To crop, go back <b>Home</b> (logo at the top left) and tick <b>Crop</b>.</p>`,
-  files: `<p>All videos and images in the open folder.</p>
-    <p><b>Click</b> a file to draw its area. The <b>checkbox</b> decides whether it is processed.</p>
+  files: `<p>All videos and images in the folder.</p>
+    <p><b>Click</b> a file to see it (and draw its area). The <b>checkbox</b> decides whether it is processed.</p>
     <p><span style="color:#7ee2a5">ROI</span> = area drawn · <span style="color:#9cc0ff">done</span> = an output file already exists.</p>`,
   draw: `<p>Draw the part of the picture you want to <b>keep</b>. Everything outside it becomes the background colour (or transparent).</p>
     <p><b>Click</b> to place points · <b>drag a point</b> to move it · <b>drag the picture</b> to move around ·
@@ -28,8 +28,9 @@ window.INFO = {
   frames: `<p>For videos the slider shows small <b>preview frames</b> from start to end, so you can check the camera or arena didn't move.
     Your points stay when you change frame.</p><p><b>🔍 Full resolution</b> loads this moment at full size, for precise points.</p>
     <p>Keys: <kbd>←</kbd> <kbd>→</kbd></p>`,
-  settings: `<p>How the new files are made. Only the settings for what you chose on the <b>Home</b> screen are shown.
-    Settings are remembered between sessions.</p><p>Recipes on the Home screen fill in good settings for common uses.</p>`,
+  settings: `<p>One card for each thing you chose on the Home screen, with its main setting. Details are under
+    <b>More options</b>. Everything is remembered for next time.</p>
+    <p>Technical options (speed, overwriting) are in <b>⚙ Settings</b>.</p>`,
   output_dir: `<p>Folder for the new files. Leave it <b>empty</b> to use a folder called <code>cropped</code> inside the folder you opened.</p>
     <p>New files keep the original name (only the extension may change). The original files are never modified.</p>`,
   size_box: `<p>The picture (or the cropped area) is scaled to <b>fit inside</b> this box, keeping its proportions:
@@ -68,8 +69,8 @@ window.INFO = {
   parallel: `<p>How many videos are processed at the same time. 2–3 is usually fastest; more can slow things down.</p>`,
   preset: `<p>MP4 encoding speed. Faster = slightly bigger files. <b>veryfast</b> is a good balance.</p>`,
   preview_n: `<p>How many preview frames the slider has for each video (spread from start to end). Fewer = loads faster.</p>`,
-  overwrite: `<p>Off: files that already exist in the output folder are skipped (so you can add new videos and run again).
-    On: they are made again.</p>`,
+  overwrite: `<p>Off: files that already have a result in the results folder are skipped (so you can add new videos and run
+    again). On: they are made again.</p>`,
   update_check: `<p>CropKit asks GitHub (anonymously) about twice a day whether a newer version exists.
     When there is one, a yellow <b>⬆ Update</b> button appears at the top.</p>`,
   update_auto: `<p>When a new version exists, it is installed by itself the next time you start CropKit
@@ -86,14 +87,16 @@ window.HELP = [
     together – and saves them all in the same format: e.g. ready for <b>DeepLabCut</b>, smaller files to share, or clean clips
     for a <b>presentation</b>.</p>
     <ol>
-      <li><b>Home</b> (click the CropKit logo): tick what you want to do – <b>Crop</b>, <b>Resize</b>, <b>Frame rate</b> – or pick a
-        <b>recipe</b>. Press <b>Continue</b>.</li>
-      <li><b>Open folder</b> (top) – the folder with your videos and/or images. They appear on the left.</li>
-      <li>If you crop: <b>draw the area to keep</b> on each file and press <b>Save &amp; next</b>. If the camera didn't move,
-        draw once and use <b>⇉ Copy to other files</b>.</li>
-      <li>Check the <b>settings</b> on the right (only those you need are shown).</li>
-      <li>Press <b>▶ Process</b>. New files go to <code>cropped</code> inside your folder (or the output folder you chose).</li>
+      <li><b>Home</b>: click what you want to do – <b>Crop</b>, <b>Resize</b>, <b>Frame rate</b> (one or more) – or a <b>recipe</b>.</li>
+      <li><b>Choose your folder</b> (Open folder, or one of your recent folders). You land in the workspace:
+        files on the left, the picture in the middle, the <b>Result</b> on the right.</li>
+      <li>If you crop: <b>draw the area to keep</b> on each file and press <b>Save &amp; next</b>. The line above the picture
+        always tells you what to do next. If the camera didn't move, draw once and use <b>Copy to other files</b>.</li>
+      <li>Check the <b>Result</b> cards on the right: one card per thing you chose, with its main setting.
+        Details are under <b>More options</b>.</li>
+      <li>Press <b>▶ Process</b>. Results go to <code>cropped</code> inside your folder (or the folder you chose in <b>Save to</b>).</li>
     </ol>
+    <p>Click the <b>CropKit logo</b> (top left) to go back Home and change what to do or the folder.</p>
     <p class="tip">Your originals are never changed. Areas you draw are saved in <code>rois.json</code> next to your files, so you can
     stop and continue later, or process the same files again with other settings.</p>
     <p>Every setting has an <span class="info">i</span> button with a short explanation.</p>`],
@@ -121,7 +124,7 @@ window.HELP = [
       <li><b>Half size</b>: all images and videos at 50 %.</li>
     </ul>`],
   ["App icon", `
-    <p>On the Home screen, <b>Create app icon</b> makes CropKit a normal app on your computer:</p>
+    <p>In <b>⚙ Settings</b> (top right), <b>Create app icon</b> makes CropKit a normal app on your computer:</p>
     <ul>
       <li><b>Mac</b>: <code>CropKit</code> in your Applications folder (and on the Desktop). Drag it onto the Dock to keep it there;
         Spotlight finds it too (⌘ Space → CropKit).</li>

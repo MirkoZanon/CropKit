@@ -149,6 +149,18 @@ function draw() {
   updateStatus(roi);
 }
 
+function updateStepHint() {
+  const t = T(), n = S.files.length, drawn = S.files.filter((f) => f.roi).length;
+  if (t.crop) {
+    $("#stepIcon").textContent = "✏️";
+    $("#editorTitle").textContent = n && drawn === n ? "All areas drawn – press ▶ Process" : "Draw the area to keep on each file";
+    $("#drawProgress").textContent = n ? `${drawn} of ${n} drawn` : "";
+    $("#drawProgress").classList.toggle("alldone", n > 0 && drawn === n);
+  } else {
+    $("#stepIcon").textContent = "👁";
+    $("#editorTitle").textContent = "Check your files, then press ▶ Process";
+  }
+}
 function updateStatus(roi = roiFromPoints(S.shape, S.pts)) {
   const f = S.files[S.cur];
   if (!f) { $("#hud").textContent = ""; $("#status").innerHTML = "—"; return; }
@@ -275,19 +287,21 @@ $("#btnPrevRoi").onclick = () => {
 // ============================================================================ folder & files
 async function openFolder(path) {
   if (!path) return;
+  if (!(T().crop || T().resize || T().fps)) { toast("First pick what you want to do (Crop, Resize or Frame rate).", true); return; }
   if (!(await leaveFile())) return;
   try {
     const d = await api("/api/folder", { path });
     S.folder = d.path; S.files = d.files; S.outputDir = d.output_dir;
+    $("#folderName").textContent = baseName(d.path); $("#folderPill").title = d.path + " – change folder (Home)";
+    hideHome();
     S.checked = new Set(S.files.map((f) => f.name));
     S.cur = -1; S.prevRoi = [...S.files].reverse().find((f) => f.roi)?.roi || null;
     $("#folderPath").value = d.path;
     fillRecent(d.recent);
-    $("#emptyMsg").classList.add("hidden");
     renderFiles(); renderRunSummary();
     const first = cropOn() ? S.files.findIndex((f) => !f.roi) : 0;
-    if (S.files.length) openFile(first >= 0 ? first : 0);
-    else { $("#emptyMsg").classList.remove("hidden"); $("#emptyMsg p").innerHTML = "<b>No videos or images</b> in this folder."; }
+    if (S.files.length) { $("#emptyMsg").classList.add("hidden"); openFile(first >= 0 ? first : 0); }
+    else { S.img = null; draw(); $("#emptyMsg").classList.remove("hidden"); $("#emptyMsg p").innerHTML = "<b>No videos or images</b> in this folder."; }
   } catch (e) { toast(e.message, true); }
 }
 async function refreshFiles() {
@@ -299,15 +313,19 @@ async function refreshFiles() {
     S.outputDir = d.output_dir; renderFiles(); renderRunSummary();
   } catch (_) { /* ignore */ }
 }
+const baseName = (p) => String(p).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p;
 function fillRecent(list) {
-  $("#recent").innerHTML = '<option value="">Recent ▾</option>' + (list || []).map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
+  S.recent = list || [];
+  $("#recentList").innerHTML = S.recent.slice(0, 5).map((p) => `
+    <button class="rrow" data-path="${esc(p)}"><span class="ri">📁</span>
+      <span class="rt"><b>${esc(baseName(p))}</b><small>${esc(p)}</small></span><span class="go">Open</span></button>`).join("");
+  $$("#recentList .rrow").forEach((b) => (b.onclick = () => openFolder(b.dataset.path)));
 }
-$("#btnOpenFolder").onclick = $("#btnOpenFolder2").onclick = async () => {
+$("#btnOpenFolder").onclick = async () => {
   const d = await api("/api/pick-folder", { prompt: "Choose the folder with your videos / images" }).catch((e) => toast(e.message, true));
   if (d && d.path) openFolder(d.path);
 };
 $("#folderPath").addEventListener("keydown", (e) => { if (e.key === "Enter") openFolder(e.target.value.trim()); });
-$("#recent").onchange = (e) => { if (e.target.value) openFolder(e.target.value); e.target.value = ""; };
 
 function visibleFiles() {
   return S.files.map((f, i) => [f, i]).filter(([f]) =>
@@ -334,6 +352,7 @@ function renderFiles() {
   });
   const nroi = S.files.filter((f) => f.roi).length;
   $("#fileSummary").textContent = S.folder ? `${S.files.length} files` + (cropOn() ? ` · ${nroi} with area` : "") : "No folder open";
+  updateStepHint();
   $("#chkAll").checked = S.files.length > 0 && S.files.every((f) => S.checked.has(f.name));
 }
 $("#chkAll").onchange = (e) => {
@@ -543,6 +562,9 @@ function fillSettings(s) {
   $(".pctopts").classList.toggle("hidden", m !== "percent");
   $(".fitopts").classList.toggle("hidden", m !== "fit");
   $(".exactopts").classList.toggle("hidden", m !== "exact");
+  $("#resizeHint").textContent = m === "percent" ? `Width and height × ${s.percent / 100} (e.g. 3840 × 2160 → ${Math.round(3840 * s.percent / 100)} × ${Math.round(2160 * s.percent / 100)}).`
+    : m === "exact" ? `Every result is exactly ${s.out_w} × ${s.out_h} px.`
+    : `Shrunk to fit inside ${s.out_w} × ${s.out_h} px, proportions kept` + (s.allow_upscale ? "." : " (smaller pictures stay as they are).");
   applyTasks();
 }
 function collectSettings() {
@@ -565,8 +587,8 @@ async function saveSettings(partial) {
   } catch (e) { toast(e.message, true); }
 }
 function onSettingChange() { clearTimeout(saveTimer); saveTimer = setTimeout(() => saveSettings(collectSettings()), 250); }
-$$(".settings input, .settings select").forEach((el) => {
-  if (el.id === "sizePreset") return;
+$$("[id^=s_], input[name=bg], input[name=resize_mode], #bgColor").forEach((el) => {
+  if (el.id.startsWith("s_update_")) return;
   el.addEventListener("change", onSettingChange);
 });
 $("#s_crf").addEventListener("input", (e) => ($("#crfVal").textContent = e.target.value));
@@ -578,9 +600,10 @@ $("#sizePreset").onchange = (e) => {
 };
 $("#bgColor").addEventListener("input", () => { $("input[name=bg][value=custom]").checked = true; });
 $("#btnPickOut").onclick = async () => {
-  const d = await api("/api/pick-folder", { prompt: "Choose the output folder" }).catch((e) => toast(e.message, true));
+  const d = await api("/api/pick-folder", { prompt: "Choose the folder for the results" }).catch((e) => toast(e.message, true));
   if (d && d.path) { $("#s_output_dir").value = d.path; onSettingChange(); }
 };
+$("#btnUseDefaultOut").onclick = () => { $("#s_output_dir").value = ""; onSettingChange(); };
 $("#btnReset").onclick = async () => {
   if (!confirm("Reset all settings to their defaults?")) return;
   const d = await api("/api/settings/reset", {}); S.settings = d.settings; fillSettings(S.settings); refreshFiles();
@@ -595,7 +618,8 @@ function describeTasks(s) {
 }
 function renderRunSummary() {
   const s = S.settings; if (!s) return;
-  $("#outDirResolved").textContent = S.folder ? "→ " + (S.outputDir || "") : "";
+  $("#outDirResolved").innerHTML = S.folder && S.outputDir
+    ? `<b>${esc(baseName(S.outputDir))}</b><br><span class="muted">${esc(S.outputDir)}</span>` : "";
   if (!S.folder) { $("#runSummary").textContent = "Open a folder first."; $("#btnProcess").disabled = true; return; }
   const t = s.tasks;
   const sel = S.files.filter((f) => S.checked.has(f.name));
@@ -710,7 +734,7 @@ function renderSysCheck() {
 }
 $("#btnHelp").onclick = $("#btnHelp2").onclick = () => openHelp(0);
 $("#btnHelpClose").onclick = closeModals;
-$("#btnQuit").onclick = async () => {
+$("#btnQuit").onclick = $("#btnQuit2").onclick = async () => {
   if (!confirm("Stop CropKit? (Running jobs are cancelled.)")) return;
   try { await api("/api/quit", {}); } catch (_) { /* server already gone */ }
   document.body.innerHTML = '<div style="padding:60px;text-align:center;font-family:sans-serif"><h2>CropKit stopped.</h2><p>You can close this window. Start it again with start.command (Mac) or start.bat (Windows).</p></div>';
@@ -725,46 +749,51 @@ function renderChips() {
 function applyTasks() {
   const t = T(), s = S.settings;
   document.body.classList.toggle("nocrop", !t.crop);
-  $("#fsResize").classList.toggle("hidden", !t.resize);
-  $("#fsFps").classList.toggle("hidden", !t.fps);
-  $("#fsNoRoi").classList.toggle("hidden", !t.crop);
+  $("#cardCrop").classList.toggle("hidden", !t.crop);
+  $("#cardResize").classList.toggle("hidden", !t.resize);
+  $("#cardFps").classList.toggle("hidden", !t.fps);
   const exact = t.resize && s.resize_mode === "exact";
-  $("#fsLayout").classList.toggle("hidden", exact);
-  $("#fsBackground").classList.toggle("hidden", !(t.crop || exact || s.uniform));
-  $("#uniformNote").textContent = s.uniform
-    ? (t.resize && s.resize_mode === "fit" ? `Every output is ${s.out_w} × ${s.out_h}.` : "Every output gets the size of the biggest one.")
-    : "Each output is only as big as its picture.";
-  $("#editorTitle").textContent = t.crop ? "2 · Draw the area to keep" : "2 · Preview";
+  // "same size for all" is implied by an exact size
+  $("#s_uniform").closest("label").classList.toggle("hidden", exact);
+  // the background choice lives in the Crop card; without crop it moves to "Save to" (for borders)
+  const bg = $("#fsBackground");
+  if (t.crop && bg.parentElement.id !== "cardCrop") $("#cardCrop h3").after(bg);
+  if (!t.crop && bg.parentElement.id !== "bgHolder") $("#bgHolder").appendChild(bg);
+  bg.classList.toggle("hidden", !(t.crop || exact || s.uniform));
+  $("#transpOpts").classList.toggle("hidden", s.background !== "transparent");
+  $("#uniformNote").textContent = exact ? "" : s.uniform
+    ? (t.resize && s.resize_mode === "fit" ? `Every result is ${s.out_w} × ${s.out_h}, the picture centred.` : "Every result gets the size of the biggest one.")
+    : "Each result is only as big as its own picture.";
   $("#drawInfo").dataset.help = t.crop ? "draw" : "preview";
   $("#btnSaveNext").innerHTML = t.crop ? "✔ Save &amp; next ▶" : "Next ▶";
-  $("#settingsSub").textContent = "Order: " + ["fps", "crop", "resize"].filter((k) => t[k])
-    .map((k) => ({ fps: "drop frames", crop: "crop", resize: "resize" }[k])).concat(["save"]).join(" → ");
+  $("#settingsSub").textContent = "Done in this order: " + ["fps", "crop", "resize"].filter((k) => t[k])
+    .map((k) => ({ fps: "frame rate", crop: "crop", resize: "resize" }[k])).concat(["save"]).join(" → ");
   renderChips(); renderFiles(); renderRunSummary(); draw();
 }
 function renderHome() {
   const t = T();
-  ["crop", "resize", "fps"].forEach((k) => {
-    $("#t_" + k).checked = !!t[k];
-    $(`.taskcard[data-task=${k}]`).classList.toggle("on", !!t[k]);
-  });
-  $$(".ostep[data-o]").forEach((e) => e.classList.toggle("on", e.dataset.o === "bg" ? !!(t.crop || t.resize) : !!t[e.dataset.o]));
-  $("#btnContinue").disabled = !(t.crop || t.resize || t.fps);
-  $("#btnContinue").textContent = (t.crop || t.resize || t.fps) ? "Continue →" : "Pick at least one";
-  if (S.sys && S.sys.shortcut) {
-    $("#btnMakeIcon").textContent = "Create again";
-    $("#iconText").textContent = "✔ CropKit already has its own icon on this computer. Recreate it if you moved the CropKit folder.";
-  }
+  $$(".task[data-task]").forEach((b) => b.classList.toggle("on", !!t[b.dataset.task]));
+  const any = t.crop || t.resize || t.fps;
+  $("#continueRow").classList.toggle("hidden", !S.folder);
+  $("#btnContinue").disabled = !any;
+  $("#btnContinue").textContent = any ? `Continue with “${baseName(S.folder || "")}” →` : "Pick at least one thing to do";
+  $("#footVersion").textContent = "CropKit " + (S.sys ? S.sys.version : "");
 }
-function showHome() { renderHome(); $("#home").classList.remove("hidden"); }
-function hideHome() { $("#home").classList.add("hidden"); applyTasks(); resizeCanvas(); }
-["crop", "resize", "fps"].forEach((k) => $("#t_" + k).addEventListener("change", async (e) => {
-  await saveSettings({ tasks: { ...T(), [k]: e.target.checked } }); renderHome();
+function showHome() {
+  renderHome(); $("#home").classList.remove("hidden");
+  $("#folderPill").classList.add("hidden"); $("#taskChips").classList.add("hidden");
+}
+function hideHome() {
+  $("#home").classList.add("hidden");
+  $("#folderPill").classList.toggle("hidden", !S.folder); $("#taskChips").classList.remove("hidden");
+  applyTasks(); resizeCanvas();
+}
+$$(".task[data-task]").forEach((b) => (b.onclick = async () => {
+  const k = b.dataset.task;
+  await saveSettings({ tasks: { ...T(), [k]: !T()[k] } }); renderHome();
 }));
-$("#btnHome").onclick = $("#taskChips").onclick = showHome;
-$("#btnContinue").onclick = () => {
-  hideHome();
-  if (!S.folder && S.settings.recent_folders && S.settings.recent_folders[0]) openFolder(S.settings.recent_folders[0]);
-};
+$("#btnHome").onclick = $("#taskChips").onclick = $("#folderPill").onclick = showHome;
+$("#btnContinue").onclick = () => { if (!(T().crop || T().resize || T().fps)) return; hideHome(); };
 const RECIPES = {
   dlc: [{ tasks: { crop: true, resize: true, fps: true }, resize_mode: "fit", out_w: 720, out_h: 720, allow_upscale: false,
           uniform: true, scale_mode: "fit", background: "black", fps: 10, crf: 20, image_format: "same", no_roi: "skip", audio: false },
@@ -783,17 +812,34 @@ const RECIPES = {
 };
 $$("[data-recipe]").forEach((b) => (b.onclick = async () => {
   const [p, msg] = RECIPES[b.dataset.recipe];
-  await saveSettings(p); renderHome(); toast("✔ " + msg + " – press Continue.", false, 5000);
+  await saveSettings(p); renderHome();
+  toast("✔ " + msg + (S.folder ? " – press Continue." : " – now choose your folder."), false, 5000);
 }));
 $("#btnMakeIcon").onclick = async () => {
   $("#btnMakeIcon").disabled = true;
   try {
     const d = await api("/api/shortcut", { desktop: true });
-    S.sys.shortcut = true; renderHome();
+    S.sys.shortcut = true; renderSettingsModal();
     toast("✔ App icon created. " + esc(d.hint), false, 12000);
   } catch (e) { toast(e.message, true, 8000); }
   $("#btnMakeIcon").disabled = false;
 };
+
+// ============================================================================ settings window
+function renderSettingsModal() {
+  $("#setVersion").textContent = S.sys.version;
+  $("#s_update_check").checked = !!S.settings.update_check;
+  $("#s_update_auto").checked = !!S.settings.update_auto;
+  if (S.sys.shortcut) {
+    $("#btnMakeIcon").textContent = "Create again";
+    $("#btnMakeIcon").classList.remove("primary");
+    $("#iconText").textContent = "✔ CropKit has its own app icon on this computer. Create it again if you moved the CropKit folder.";
+  }
+}
+function openSettingsModal() { renderSettingsModal(); $("#settingsModal").classList.remove("hidden"); }
+$("#btnSettings").onclick = openSettingsModal;
+$$("[data-open=settings]").forEach((b) => (b.onclick = openSettingsModal));
+$("#btnSetCheck").onclick = () => { closeModals(); openUpdates(); };
 
 // ============================================================================ updates
 const U = { info: null };
@@ -837,8 +883,6 @@ async function checkUpdates(force = false, quiet = true) {
   }
 }
 function openUpdates() {
-  $("#s_update_check").checked = !!S.settings.update_check;
-  $("#s_update_auto").checked = !!S.settings.update_auto;
   renderUpdateInfo();
   $("#updateModal").classList.remove("hidden");
   if (!U.info) checkUpdates(true, false);
@@ -905,7 +949,7 @@ function showJustUpdated() {
   S.shape = S.settings.default_shape || "circle";
   setShape(S.shape, false);
   fillSettings(S.settings); fillRecent(S.settings.recent_folders); renderRunSummary(); resizeCanvas();
-  $("#btnVersion").textContent = "v" + S.sys.version;
+  $("#footVersion").textContent = "CropKit " + S.sys.version;
   showJustUpdated();
   checkUpdates();
   applyTasks();

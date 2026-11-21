@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0
+- **Simpler, cleaner look** (in the style of PaperShelf).
+- **Home**: first what to do (Crop / Resize / Frame rate, or a recipe), then your folder – recent folders are one click away.
+- **Workspace**: files on the left, the picture in the middle with a line that always says what to do next
+  (e.g. "3 of 4 drawn"), and on the right one **Result** card per thing you chose with only its main setting.
+  Details are under *More options*.
+- **⚙ Settings** window for the app icon, updates and technical options (speed, redoing finished files).
+
 ## 1.2.0
 - **Home screen**: choose what to do – **Crop**, **Resize**, **Frame rate**, or any combination – or start from a recipe
   (DeepLabCut, Clip for slides, Smaller videos, Only frame rate, Half size). Only the steps and settings you need are shown.

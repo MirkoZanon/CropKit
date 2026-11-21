@@ -60,7 +60,7 @@ because it supports the hardware video decoder. Check in **Help → System check
 
 ## 2. Start and stop
 
-- **App icon (recommended)**: after the first start, click **Create app icon** on the Home screen. On a Mac CropKit then
+- **App icon (recommended)**: after the first start, open **⚙ Settings** (top right) → **Create app icon**. On a Mac CropKit then
   appears in your Applications folder (and on the Desktop): drag it onto the Dock. On Windows it is on the Desktop and in
   the Start menu. The icon starts CropKit without a Terminal window.
 - **Start file**: double-click `start.command` (Mac) / `start.bat` (Windows). CropKit opens in a Chrome / Edge / Brave
@@ -71,9 +71,10 @@ because it supports the hardware video decoder. Check in **Help → System check
 
 ## 3. How to use it
 
-1. **Home** – tick what you want to do: **✂️ Crop**, **⤡ Resize**, **⏱ Frame rate** (any combination), or click a recipe.
-   Press **Continue**. (Click the CropKit logo to come back to Home.)
-2. **Open folder** – the folder with your videos and/or images. They are listed on the left.
+1. **Home** – click what you want to do: **✂️ Crop**, **⤡ Resize**, **⏱ Frame rate** (any combination), or a recipe.
+2. **Choose your folder** (Open folder, or a recent folder). You land in the workspace: files on the left, the picture in
+   the middle (the line above it always says what to do next), the **Result** on the right.
+   Click the CropKit logo to go back Home.
 3. If you crop: **draw the area to keep** on each file, then **Save & next** (<kbd>Enter</kbd>):
 
    | Shape | How |
@@ -87,7 +88,8 @@ because it supports the hardware video decoder. Check in **Help → System check
    - For videos, the slider shows preview frames from start to end (<kbd>←</kbd> <kbd>→</kbd>); **🔍 Full resolution** loads the
      current moment at full size.
    - Camera didn't move? Draw once, then **⇉ Copy to other files**.
-4. **Settings** on the right – only those for the tasks you chose are shown.
+4. **Result** on the right – one card per thing you chose, with its main setting; details under *More options*.
+   Technical options (speed, redoing finished files, app icon, updates) are in **⚙ Settings**.
 5. **▶ Process**. One progress bar per file (%, time left, speed). New files go to `cropped/` inside your folder
    (or the output folder you chose).
 
@@ -118,7 +120,7 @@ keep), crop before resize (exact area, no work on pixels that are thrown away), 
 | Keep sound | Copy the audio track. |
 | Images: save as | same as original / PNG / JPEG / WebP / TIFF (transparent → PNG instead of JPEG). |
 | Files without area | (crop) skip them, or process the whole frame. |
-| Advanced | hardware decoding, videos in parallel, encoding speed, preview frames, overwrite existing outputs. |
+| ⚙ Settings | app icon, updates, hardware decoding, videos in parallel, encoding speed, preview frames, redo finished files. |
 
 Settings are remembered in `~/.cropkit/settings.json`.
 
