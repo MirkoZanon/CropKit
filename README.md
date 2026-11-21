@@ -25,7 +25,9 @@ Built-in help: click **? Help** in the app, or any **(i)** button next to a sett
 5. [Output files](#5-output-files)
 6. [DeepLabCut](#6-deeplabcut)
 7. [Troubleshooting](#7-troubleshooting)
-8. [For developers](#8-for-developers)
+8. [Updating](#8-updating)
+9. [For developers](#9-for-developers)
+10. [Publishing a new version (maintainers)](#10-publishing-a-new-version-maintainers)
 
 ---
 
@@ -128,10 +130,20 @@ In the output folder:
 - **Files are "skipped"** – an output already exists; tick *Advanced → Overwrite existing outputs*.
 - **"Port 5056 is used by another program"** – start with `python app.py --port 5057`.
 
-## 8. For developers
+## 8. Updating
+
+CropKit updates itself from this GitHub page:
+- When a new version exists, a yellow **⬆ Update** button appears at the top: **Install update** → **Restart**.
+  Your settings and drawn areas are kept; a backup of the old version goes to `~/.cropkit/backups`.
+- By default new versions are also installed **automatically when CropKit starts**. Click the version number
+  (top right) to check now or to turn this off.
+- If your CropKit folder is a `git clone`, updating runs `git pull` (the start file does this too).
+
+## 9. For developers
 
 ```
-app.py        Flask server: API, background jobs, settings (port 5056)
+app.py        Flask server: API, background jobs, settings, updates (port 5056)
+updater.py    checks GitHub for new versions and installs them (update.json = which repository)
 media.py      processing engine: ROIs, masks, sizes, ffmpeg (videos) and Pillow (images)
 launcher.py   opens the app window (Chrome/Edge/Brave --app, else default browser)
 static/       the interface: index.html, app.css, app.js, help.js (texts of Help and (i) buttons)
@@ -150,6 +162,14 @@ size = media.plan_sizes({"a": roi}, ["a"], 720, 720)["a"]
 media.process_video("in.mp4", "out.mp4", roi, size, canvas=(720, 720), fps=10, background="black")
 media.process_image("in.jpg", "out.png", roi, size, canvas=None, background="transparent")
 ```
+
+## 10. Publishing a new version (maintainers)
+
+1. Make the changes, then raise the number in `VERSION` (e.g. `1.1.0` → `1.2.0`) and add a `## 1.2.0` section
+   at the top of `CHANGELOG.md` (it becomes the "What's new" text shown in the app).
+2. `git add -A && git commit -m "CropKit 1.2.0" && git push`
+3. The GitHub Action in `.github/workflows/release.yml` creates the release `v1.2.0` with a zip by itself
+   (see the *Actions* tab). Every installed CropKit then shows the Update button.
 
 ## Licence
 [MIT](LICENSE). Uses [Flask](https://flask.palletsprojects.com), [Pillow](https://python-pillow.org),

@@ -24,12 +24,14 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 import media
+import updater
 from launcher import open_ui
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = (APP_DIR / "VERSION").read_text().strip() if (APP_DIR / "VERSION").exists() else "dev"
+VERSION = updater.read_version()
 DATA_DIR = Path.home() / ".cropkit"
 SETTINGS_FILE = DATA_DIR / "settings.json"
+BACKUP_DIR = DATA_DIR / "backups"          # app backups made before each update
 DEFAULT_PORT = 5056
 
 DEFAULTS = {
@@ -54,6 +56,10 @@ DEFAULTS = {
     "preview_n": 40,
     "default_shape": "circle",
     "recent_folders": [],
+    "update_check": True,           # look for new versions on GitHub (once every 12 h)
+    "update_auto": True,            # install them automatically when CropKit starts
+    "update_cache": {},
+    "just_updated": {},
 }
 
 app = Flask(__name__, static_folder=str(APP_DIR / "static"), static_url_path="/static")
@@ -101,7 +107,7 @@ def clean_settings(new: dict, old: dict) -> dict:
     choice("transparent_video_format", ("mov", "webm")); choice("image_format", ("same", "png", "jpg", "webp", "tif"))
     choice("preset", ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"))
     choice("no_roi", ("skip", "full")); choice("default_shape", media.SHAPES)
-    for k in ("uniform", "audio", "hwaccel", "overwrite"):
+    for k in ("uniform", "audio", "hwaccel", "overwrite", "update_check", "update_auto"):
         flag(k)
     if "background" in new:
         bg = str(new["background"]).strip()
@@ -187,7 +193,8 @@ def ping():
 
 @app.get("/api/state")
 def state():
-    return jsonify(version=VERSION, settings=SETTINGS, defaults=DEFAULTS, platform=sys.platform,
+    ucfg = updater.config()
+    return jsonify(version=VERSION, settings=SETTINGS, update_repo=ucfg["repo"], git_copy=updater.is_git_checkout(), defaults=DEFAULTS, platform=sys.platform,
                    ffmpeg=media.FFMPEG, ffmpeg_version=media.ffmpeg_version(),
                    video_exts=sorted(media.VIDEO_EXTS), image_exts=sorted(media.IMAGE_EXTS),
                    python=sys.version.split()[0])
@@ -207,7 +214,7 @@ def reset_settings():
     global SETTINGS
     with SETTINGS_LOCK:
         recent = SETTINGS.get("recent_folders", [])
-        SETTINGS = dict(DEFAULTS, recent_folders=recent)
+        SETTINGS = dict(DEFAULTS, recent_folders=recent, update_cache=SETTINGS.get("update_cache", {}))
         save_settings(SETTINGS)
     return jsonify(settings=SETTINGS)
 
@@ -512,6 +519,123 @@ def cancel():
     return jsonify(ok=True)
 
 
+# ============================================================================ updates (see updater.py)
+UPDATE_CACHE_HOURS = 12
+SERVER = {"srv": None, "restart": False}
+UPDATE_JOB = {"running": False, "result": None, "error": None}
+
+
+def _set(**kw):
+    with SETTINGS_LOCK:
+        SETTINGS.update(kw)
+        save_settings(SETTINGS)
+
+
+@app.get("/api/update/check")
+def update_check():
+    """Ask GitHub whether a newer version exists. Cached for 12 hours unless ?force=1."""
+    force = request.args.get("force") == "1"
+    if not force and request.args.get("auto") == "1" and not SETTINGS.get("update_check"):
+        return jsonify(skipped=True, current=VERSION)
+    cached = SETTINGS.get("update_cache") or {}
+    if not force and cached.get("current") == VERSION and time.time() - cached.get("ts", 0) < UPDATE_CACHE_HOURS * 3600:
+        return jsonify({**cached, "cached_result": True})
+    try:
+        info = updater.check(current=VERSION)
+    except updater.UpdateError as exc:
+        return jsonify(error=str(exc)), 502
+    info["ts"] = time.time()
+    _set(update_cache=info)
+    return jsonify(info)
+
+
+def _remember_update(res, notes=""):
+    _set(just_updated={"version": res.get("installed"), "previous": res.get("previous"),
+                       "notes": notes or "", "warning": res.get("warning", "")}, update_cache={})
+
+
+def _update_job(info):
+    try:
+        res = updater.install(info, BACKUP_DIR)
+        _remember_update(res, info.get("notes", ""))
+        res["restart"] = res.get("installed") != VERSION or bool(res.get("git"))
+        UPDATE_JOB["result"] = res
+    except updater.UpdateError as exc:
+        UPDATE_JOB["error"] = str(exc)
+    except Exception as exc:  # noqa: BLE001 - shown in the Updates window
+        UPDATE_JOB["error"] = f"The update failed: {exc}"
+    finally:
+        updater._progress("done")
+        UPDATE_JOB["running"] = False
+
+
+@app.post("/api/update/install")
+def update_install():
+    """Install the newest version in the background; the page follows /api/update/progress."""
+    if UPDATE_JOB["running"]:
+        return jsonify(started=True, already=True)
+    if RUN.busy():
+        raise RuntimeError("Files are being processed – wait for them to finish (or cancel) before updating.")
+    try:
+        info = updater.check(current=VERSION)
+    except updater.UpdateError as exc:
+        return jsonify(error=str(exc)), 502
+    if not info.get("available"):
+        return jsonify(error=f"You already have the latest version ({VERSION})."), 400
+    updater.PROGRESS.clear()
+    updater._progress("start")
+    UPDATE_JOB.update(running=True, result=None, error=None, latest=info.get("latest"))
+    threading.Thread(target=_update_job, args=(info,), daemon=True).start()
+    return jsonify(started=True, latest=info.get("latest"))
+
+
+@app.get("/api/update/progress")
+def update_progress():
+    return jsonify(running=UPDATE_JOB["running"], result=UPDATE_JOB["result"], error=UPDATE_JOB["error"],
+                   latest=UPDATE_JOB.get("latest"), **{k: v for k, v in updater.PROGRESS.items() if k != "t"})
+
+
+@app.post("/api/update/seen")
+def update_seen():
+    _set(just_updated={})
+    return jsonify(ok=True)
+
+
+@app.post("/api/update/restart")
+def update_restart():
+    if SERVER["srv"] is None:
+        raise RuntimeError("Restart CropKit yourself: close its Terminal window and open the start file again.")
+    cancel_all()
+    SERVER["restart"] = True
+    threading.Timer(0.6, SERVER["srv"].shutdown).start()
+    return jsonify(ok=True)
+
+
+def startup_update(open_browser: bool):
+    """Install a new version before the app starts, when "Install updates automatically" is on.
+    Quick and silent when offline; never blocks the start for more than a few seconds.
+    Git copies are updated by the start file (git pull) instead."""
+    if updater.is_git_checkout() or not (SETTINGS.get("update_auto") and SETTINGS.get("update_check")):
+        return
+    cached = SETTINGS.get("update_cache") or {}
+    if cached.get("current") == VERSION and not cached.get("available") and time.time() - cached.get("ts", 0) < 6 * 3600:
+        return
+    try:
+        info = updater.check(current=VERSION, timeout=6)
+        info["ts"] = time.time()
+        _set(update_cache=info)
+        if not info.get("available"):
+            return
+        print(f"  Installing CropKit {info['latest']} (you had {VERSION})...")
+        res = updater.install(info, BACKUP_DIR)
+        _remember_update(res, info.get("notes", ""))
+    except Exception as exc:  # noqa: BLE001 - an update problem must never stop the app from starting
+        print(f"  (Update check skipped: {exc})")
+        return
+    print("  Done - starting the new version.\n")
+    updater.relaunch(browser=open_browser)
+
+
 # ============================================================================ start
 def already_running(port) -> bool:
     try:
@@ -532,6 +656,11 @@ def main():
     ap.add_argument("--no-browser", action="store_true")
     a = ap.parse_args()
     url = f"http://127.0.0.1:{a.port}"
+    if os.environ.pop("CROPKIT_WAIT_PORT", ""):     # started by an update: the old version is still closing
+        for _ in range(150):
+            if port_free(a.port):
+                break
+            time.sleep(0.2)
     if already_running(a.port):
         print(f"CropKit is already running - opening {url}")
         if not a.no_browser:
@@ -539,14 +668,31 @@ def main():
         return
     if not port_free(a.port):
         sys.exit(f"Port {a.port} is used by another program. Start with: python app.py --port {a.port + 1}")
-    print(f"CropKit {VERSION} – {url}")
-    print(f"ffmpeg: {media.FFMPEG or 'NOT FOUND (videos will not work)'}")
-    print("Close this window (or use Quit in the app) to stop CropKit.")
+    startup_update(open_browser=not a.no_browser)
+    print(f"\n  CropKit {VERSION} is running – {url}")
+    print(f"  ffmpeg: {media.FFMPEG or 'NOT FOUND (videos will not work)'}")
+    print("  Close this window (or use Quit in the app) to stop CropKit.\n")
     import logging
     logging.getLogger("werkzeug").setLevel(logging.WARNING)      # no line per request in the terminal
     if not a.no_browser:
         threading.Timer(0.8, lambda: open_ui(url)).start()
-    app.run(host="127.0.0.1", port=a.port, threaded=True, debug=False, use_reloader=False)
+    from werkzeug.serving import make_server
+    srv = make_server("127.0.0.1", a.port, app, threaded=True)
+    SERVER["srv"] = srv
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        return
+    finally:
+        srv.server_close()
+    if SERVER["restart"]:
+        print("\n  Restarting CropKit with the new version...\n")
+        if os.name == "nt" and updater.spawn_detached():
+            print("  CropKit restarted in the background with the new version – you can close this window.\n")
+            sys.stdout.flush()
+            os._exit(0)
+        updater.relaunch()       # the open window reconnects by itself
+    print("\n  CropKit has stopped. You can close this window.\n")
 
 
 if __name__ == "__main__":

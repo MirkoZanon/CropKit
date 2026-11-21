@@ -181,3 +181,16 @@ fieldset input[type=range], .advanced input[type=range] { width: 100%; }
 #helpContent .tip { background: #f2f7ff; border-left: 3px solid var(--accent); padding: 8px 12px; border-radius: 6px; }
 
 @media (max-width: 1150px) { .layout { grid-template-columns: 210px 1fr 300px; } }
+
+/* ---------------------------------------------------------------- updates */
+button.update { background: #fff4d6; border-color: #f0c040; color: #7a5300; font-weight: 600; }
+button.update:hover { background: #ffeab0; }
+.kv td { padding: 3px 14px 3px 0; }
+.upmsg { margin: 10px 0 6px; font-size: 13px; }
+.upmsg.err { color: var(--danger); }
+.upnotes { background: #f6f8fb; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 12.5px;
+  max-height: 220px; overflow-y: auto; line-height: 1.5; }
+.upnotes ul { margin: 4px 0; padding-left: 18px; }
+.bar.big { height: 8px; background: #eceef2; border-radius: 4px; overflow: hidden; margin: 8px 0 4px; }
+.bar.big > div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.modalbox hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0 4px; }

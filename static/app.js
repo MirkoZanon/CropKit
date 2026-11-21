@@ -225,7 +225,7 @@ function addPoint(p) {
 document.addEventListener("keydown", (e) => {
   const tag = (document.activeElement && document.activeElement.tagName) || "";
   if (["INPUT", "SELECT", "TEXTAREA"].includes(tag) && document.activeElement.type !== "range") return;
-  if (!$("#helpModal").classList.contains("hidden") || !$("#copyModal").classList.contains("hidden")) {
+  if ($$(".modal").some((m) => !m.classList.contains("hidden"))) {
     if (e.key === "Escape") closeModals(); return;
   }
   if (e.key === "Escape") { hidePopover(); return; }
@@ -705,6 +705,107 @@ $("#btnQuit").onclick = async () => {
   document.body.innerHTML = '<div style="padding:60px;text-align:center;font-family:sans-serif"><h2>CropKit stopped.</h2><p>You can close this window. Start it again with start.command (Mac) or start.bat (Windows).</p></div>';
 };
 
+// ============================================================================ updates
+const U = { info: null };
+function mdNotes(t) {
+  if (!t) return "";
+  let html = "", inList = false;
+  for (const raw of t.split("\n")) {
+    const l = raw.trim();
+    if (/^[-*] /.test(l)) { if (!inList) { html += "<ul>"; inList = true; } html += `<li>${esc(l.slice(2))}</li>`; continue; }
+    if (inList) { html += "</ul>"; inList = false; }
+    if (!l) continue;
+    html += /^#+ /.test(l) ? `<b>${esc(l.replace(/^#+ /, ""))}</b><br>` : `<p style="margin:4px 0">${esc(l)}</p>`;
+  }
+  return html + (inList ? "</ul>" : "");
+}
+function renderUpdateInfo() {
+  const d = U.info;
+  $("#upCurrent").textContent = S.sys.version;
+  $("#upSource").textContent = S.sys.update_repo
+    ? `Updates come from github.com/${S.sys.update_repo}` + (S.sys.git_copy ? " · this folder is a git clone: updating uses git pull." : "")
+    : "No update source configured (update.json).";
+  if (!d) return;
+  $("#upLatest").textContent = d.latest || "–";
+  $("#upWhen").textContent = d.published ? "(" + d.published.slice(0, 10) + ")" : "";
+  $("#upMsg").className = "upmsg";
+  $("#upMsg").innerHTML = d.available ? `<b>A new version is available.</b>` : `✔ You have the latest version.`;
+  $("#upNotes").innerHTML = d.available && d.notes ? "<b>What's new</b>" + mdNotes(d.notes) : "";
+  $("#upNotes").classList.toggle("hidden", !(d.available && d.notes));
+  $("#btnUpInstall").classList.toggle("hidden", !d.available);
+  $("#btnUpdate").classList.toggle("hidden", !d.available);
+  if (d.available) $("#btnUpdate").textContent = `⬆ Update to ${d.latest}`;
+}
+async function checkUpdates(force = false, quiet = true) {
+  if (!quiet) { $("#upMsg").className = "upmsg"; $("#upMsg").textContent = "Checking GitHub…"; }
+  try {
+    const d = await api("/api/update/check?" + qs(force ? { force: 1 } : { auto: 1 }));
+    if (d.skipped) return;
+    U.info = d; renderUpdateInfo();
+  } catch (e) {
+    if (!quiet) { $("#upMsg").className = "upmsg err"; $("#upMsg").textContent = e.message; }
+  }
+}
+function openUpdates() {
+  $("#s_update_check").checked = !!S.settings.update_check;
+  $("#s_update_auto").checked = !!S.settings.update_auto;
+  renderUpdateInfo();
+  $("#updateModal").classList.remove("hidden");
+  if (!U.info) checkUpdates(true, false);
+}
+$("#btnVersion").onclick = openUpdates;
+$("#btnUpdate").onclick = openUpdates;
+$("#btnUpCheck").onclick = () => checkUpdates(true, false);
+["update_check", "update_auto"].forEach((k) =>
+  $("#s_update_" + k.split("_")[1]).addEventListener("change", (e) => saveSettings({ [k]: e.target.checked })));
+const STAGES = { start: "Starting…", download: "Downloading", unpack: "Unpacking", backup: "Backing up the current version",
+  files: "Replacing files", libraries: "Installing libraries", git: "git pull", done: "Done" };
+$("#btnUpInstall").onclick = async () => {
+  try { await api("/api/update/install", {}); } catch (e) { $("#upMsg").className = "upmsg err"; $("#upMsg").textContent = e.message; return; }
+  $("#btnUpInstall").classList.add("hidden"); $("#btnUpCheck").disabled = true;
+  $("#upProgress").classList.remove("hidden");
+  const t = setInterval(async () => {
+    let d; try { d = await api("/api/update/progress"); } catch (_) { return; }
+    const frac = d.total ? d.done / d.total : (d.stage === "done" ? 1 : 0.15);
+    $("#upBar").style.width = Math.round(Math.min(frac, 1) * 100) + "%";
+    $("#upStage").textContent = (STAGES[d.stage] || d.stage || "") + (d.stage === "download" && d.done ? ` · ${fmtBytes(d.done)}` : "");
+    if (d.running) return;
+    clearInterval(t); $("#btnUpCheck").disabled = false;
+    if (d.error) { $("#upMsg").className = "upmsg err"; $("#upMsg").textContent = d.error; $("#btnUpInstall").classList.remove("hidden"); return; }
+    const r = d.result || {};
+    $("#upBar").style.width = "100%";
+    $("#upMsg").className = "upmsg";
+    $("#upMsg").innerHTML = `✔ Version <b>${esc(r.installed)}</b> installed. <b>Restart CropKit</b> to use it.` +
+      (r.warning ? `<br><span class="small muted">${esc(r.warning)}</span>` : "");
+    $("#btnUpRestart").classList.remove("hidden");
+  }, 400);
+};
+$("#btnUpRestart").onclick = async () => {
+  const old = S.sys.version;
+  try { await api("/api/update/restart", {}); } catch (e) { $("#upMsg").className = "upmsg err"; $("#upMsg").textContent = e.message; return; }
+  $("#upMsg").textContent = "Restarting… the window reloads by itself.";
+  $("#btnUpRestart").disabled = true;
+  let wentDown = false;
+  const t = setInterval(async () => {
+    try {
+      const d = await (await fetch("/api/ping", { cache: "no-store" })).json();
+      if (wentDown || d.version !== old) { clearInterval(t); location.reload(); }
+    } catch (_) { wentDown = true; }
+  }, 1000);
+};
+function showJustUpdated() {
+  const j = S.settings.just_updated || {};
+  if (!j.version) return;
+  toast(`✔ CropKit was updated to <b>${esc(j.version)}</b> (from ${esc(j.previous || "?")}).` +
+        (j.notes ? ` <a href="#" id="whatsNew" style="color:#9cc0ff">What's new</a>` : ""), false, 12000);
+  const a = $("#whatsNew");
+  if (a) a.onclick = (e) => {
+    e.preventDefault(); openUpdates();
+    $("#upNotes").innerHTML = "<b>What's new in " + esc(j.version) + "</b>" + mdNotes(j.notes); $("#upNotes").classList.remove("hidden");
+  };
+  api("/api/update/seen", {}).catch(() => {});
+}
+
 // ============================================================================ start
 (async function init() {
   try {
@@ -714,6 +815,9 @@ $("#btnQuit").onclick = async () => {
   S.shape = S.settings.default_shape || "circle";
   setShape(S.shape, false);
   fillSettings(S.settings); fillRecent(S.settings.recent_folders); renderRunSummary(); resizeCanvas();
+  $("#btnVersion").textContent = "v" + S.sys.version;
+  showJustUpdated();
+  checkUpdates();
   if (!S.sys.ffmpeg) toast("ffmpeg was not found: images work, videos won't. See Help → Troubleshooting.", true, 10000);
   const j = await api("/api/jobs").catch(() => null);
   if (j && j.jobs.length) { renderJobs(j.jobs, j.busy); if (j.busy) startPolling(); }

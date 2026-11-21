@@ -18,6 +18,8 @@
     </div>
   </div>
   <div class="topright">
+    <button id="btnUpdate" class="update hidden" title="A new version of CropKit is available">⬆ Update</button>
+    <button id="btnVersion" class="ghost" title="Version and updates">v…</button>
     <button id="btnHelp" title="Instructions">? Help</button>
     <button id="btnQuit" class="ghost" title="Stop CropKit">⏻ Quit</button>
   </div>
@@ -257,6 +259,35 @@
       <p class="small muted">Only files with the same pixel size are changed (an ROI only makes sense on images of the same size).
          Useful when the camera didn't move between recordings.</p>
       <p><button class="primary" id="btnCopyGo">Copy</button> <button data-close>Cancel</button></p>
+    </div>
+  </div>
+</div>
+
+<div id="updateModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modalbox small">
+    <div class="modalhead"><h2>CropKit updates</h2><button class="ghost" data-close>✕</button></div>
+    <div class="modalbody single">
+      <table class="kv">
+        <tr><td>Your version</td><td><b id="upCurrent"></b></td></tr>
+        <tr><td>Newest version</td><td><b id="upLatest">–</b> <span id="upWhen" class="small muted"></span></td></tr>
+      </table>
+      <div id="upMsg" class="upmsg"></div>
+      <div id="upNotes" class="upnotes hidden"></div>
+      <div id="upProgress" class="hidden">
+        <div class="bar big"><div id="upBar"></div></div>
+        <div id="upStage" class="small muted"></div>
+      </div>
+      <p class="inline">
+        <button id="btnUpCheck">↻ Check now</button>
+        <button id="btnUpInstall" class="go hidden">⬆ Install update</button>
+        <button id="btnUpRestart" class="primary hidden">↻ Restart CropKit</button>
+      </p>
+      <hr>
+      <label class="chk row"><input type="checkbox" id="s_update_check"> Check for new versions automatically
+        <span class="info" data-help="update_check">i</span></label>
+      <label class="chk row"><input type="checkbox" id="s_update_auto"> Install them automatically when CropKit starts
+        <span class="info" data-help="update_auto">i</span></label>
+      <p class="small muted" id="upSource"></p>
     </div>
   </div>
 </div>

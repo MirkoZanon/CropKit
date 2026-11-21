@@ -48,6 +48,11 @@ window.INFO = {
   preview_n: `<p>How many preview frames the slider has for each video (spread from start to end). Fewer = loads faster.</p>`,
   overwrite: `<p>Off: files that already exist in the output folder are skipped (so you can add new videos and run again).
     On: they are made again.</p>`,
+  update_check: `<p>CropKit asks GitHub (anonymously) about twice a day whether a newer version exists.
+    When there is one, a yellow <b>⬆ Update</b> button appears at the top.</p>`,
+  update_auto: `<p>When a new version exists, it is installed by itself the next time you start CropKit
+    (a backup of the old version is kept in <code>~/.cropkit/backups</code>).</p>
+    <p>If your CropKit folder is a <b>git clone</b>, the start file already updates it with <code>git pull</code>.</p>`,
   process: `<p>Makes the new files for all <b>ticked</b> files that have an area (or all ticked files if
     "Files without ROI" is set to whole frame).</p><p>One bar per file shows progress, speed and time left.
     You can keep drawing areas while it runs.</p>`,
@@ -142,6 +147,16 @@ window.HELP = [
       <li><b>Outputs are skipped</b>: they already exist; tick <b>Overwrite</b> in Advanced.</li>
       <li><b>CropKit window closed</b>: CropKit keeps running in the Terminal window; open
         <code>http://127.0.0.1:5056</code> again, or double-click start.command. <b>⏻ Quit</b> stops it.</li>
+    </ul>`],
+  ["Updates", `
+    <p>CropKit updates itself from its GitHub page.</p>
+    <ul>
+      <li>When a new version exists, a yellow <b>⬆ Update</b> button appears at the top. Click it, then
+        <b>Install update</b> and <b>Restart</b> – your settings and drawn areas are kept.</li>
+      <li>Click the <b>version number</b> (top right) to check now and to switch automatic checking / installing on or off.</li>
+      <li>By default new versions are installed automatically when CropKit starts.</li>
+      <li>Before every update a backup of the old version is saved in <code>~/.cropkit/backups</code>.</li>
+      <li>If the CropKit folder is a <b>git clone</b>, the update runs <code>git pull</code> (and so does the start file).</li>
     </ul>`],
   ["System check", `<div id="syscheck">loading…</div>`],
 ];

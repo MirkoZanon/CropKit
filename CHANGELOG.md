@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0
+- **Updates from inside the app**: a yellow **⬆ Update** button appears when a new version is on GitHub;
+  one click installs it (a backup of the old version is kept in `~/.cropkit/backups`) and restarts CropKit.
+- New versions can also be installed automatically when CropKit starts (on by default; click the version
+  number at the top right to change this).
+- Folders that are a git clone are updated with `git pull`.
+- Every new version is published automatically as a GitHub release (when `VERSION` changes).
+
 ## 1.0.0
 First version.
 - Crop videos and images to a circle, rectangle, square, polygon or the whole frame.
