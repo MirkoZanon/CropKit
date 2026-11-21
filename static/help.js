@@ -71,6 +71,8 @@ window.INFO = {
   preview_n: `<p>How many preview frames the slider has for each video (spread from start to end). Fewer = loads faster.</p>`,
   overwrite: `<p>Off: files that already have a result in the results folder are skipped (so you can add new videos and run
     again). On: they are made again.</p>`,
+  autostart: `<p>CropKit starts quietly when you log in (no window), so the app opens instantly when you click it.
+    It uses almost no memory while waiting. Stop it any time with <b>Quit CropKit</b>.</p>`,
   update_check: `<p>CropKit asks GitHub (anonymously) about twice a day whether a newer version exists.
     When there is one, a yellow <b>⬆ Update</b> button appears at the top.</p>`,
   update_auto: `<p>When a new version exists, it is installed by itself the next time you start CropKit
@@ -123,45 +125,17 @@ window.HELP = [
       <li><b>Only frame rate</b>: 10 fps, picture unchanged.</li>
       <li><b>Half size</b>: all images and videos at 50 %.</li>
     </ul>`],
-  ["App icon", `
-    <p>In <b>⚙ Settings</b> (top right), <b>Create app icon</b> makes CropKit a normal app on your computer:</p>
+  ["Use as an app", `
+    <p>In <b>⚙ Settings</b>, <b>Install CropKit as an app</b> makes CropKit a real app on your computer (Chrome, Edge or Brave
+    needed – they do the installing):</p>
     <ul>
-      <li><b>Mac</b>: <code>CropKit</code> in your Applications folder (and on the Desktop). Drag it onto the Dock to keep it there;
-        Spotlight finds it too (⌘ Space → CropKit).</li>
-      <li><b>Windows</b>: on the Desktop and in the Start menu (right-click → Pin to taskbar).</li>
-      <li><b>Linux</b>: in the applications menu.</li>
+      <li>its own icon in the <b>Dock</b> (Mac: in Applications, Launchpad and Spotlight) or <b>taskbar</b> (Windows: Start menu);</li>
+      <li>its own window, and <i>Quit</i> in its menu – your normal browser windows never open with it.</li>
     </ul>
-    <p>The icon starts CropKit in the background – no Terminal window – and opens its window. If CropKit is already running it
-    just opens the window. Stop it with <b>⏻ Quit</b>. The first start after installing (or when new libraries are needed)
-    still opens a Terminal window once, to set things up.</p>
-    <p>If you move the CropKit folder, create the icon again.</p>`],
-  ["Drawing the area", `
-    <table>
-      <tr><th>Shape</th><th>How</th></tr>
-      <tr><td>◯ Circle</td><td>Click <b>3 or more points on the edge</b>, spread around it. The circle is fitted through them; more points = more precise.</td></tr>
-      <tr><td>▭ Rectangle</td><td>Click <b>2 opposite corners</b>. Clicking again moves the nearest corner.</td></tr>
-      <tr><td>□ Square</td><td>Like rectangle; the side is the longer of the two distances.</td></tr>
-      <tr><td>⬠ Polygon</td><td>Click the <b>corners in order</b> around the area (any shape: triangle, L-shape, maze…).</td></tr>
-      <tr><td>⛶ Whole frame</td><td>No crop – only resize / reduce frame rate.</td></tr>
-    </table>
-    <h3>Moving around</h3>
-    <ul>
-      <li><b>Zoom</b>: mouse wheel or trackpad pinch (zooms where the pointer is). <b>⤢ Fit</b> (<kbd>F</kbd>) shows the whole picture.</li>
-      <li><b>Move the picture</b>: drag it.</li>
-      <li><b>Move a point</b>: drag the point. <b>Undo</b> (<kbd>Backspace</kbd>) removes the last one, <b>Clear</b> all.</li>
-      <li>Everything outside the area is darkened, so you see exactly what will be kept.</li>
-    </ul>
-    <h3>Videos</h3>
-    <p>The slider under the picture shows preview frames from start to end (<kbd>←</kbd> <kbd>→</kbd>): check the area is right during
-    the whole video. Points stay when you change frame, so you can click part of an edge on one frame and the rest on another.
-    <b>🔍 Full resolution</b> loads the current moment at full size for precise points.</p>
-    <h3>Saving</h3>
-    <ul>
-      <li><b>Save &amp; next</b> (<kbd>Enter</kbd>) saves the area and opens the next file.</li>
-      <li><b>⧉ Use previous</b> copies the area of the last file you saved, to adjust it.</li>
-      <li><b>⇉ Copy to other files</b> gives this area to other files of the same size.</li>
-      <li><b>Remove ROI</b> deletes the saved area of this file.</li>
-    </ul>`],
+    <p>Click it, then click <b>Install CropKit</b> in the browser tab that opens. Keep the new app in the Dock
+    (right-click its icon → Options → Keep in Dock).</p>
+    <p>If CropKit isn't running when you open the app, the app shows a <b>Start CropKit</b> button. Tick
+    <b>Start CropKit in the background when I log in</b> to have it always ready.</p>`],
   ["Settings", `
     <table>
       <tr><td><b>Output folder</b></td><td>Empty = <code>cropped</code> inside the opened folder. Same file names; extension may change.</td></tr>

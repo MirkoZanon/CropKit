@@ -60,9 +60,14 @@ because it supports the hardware video decoder. Check in **Help → System check
 
 ## 2. Start and stop
 
-- **App icon (recommended)**: after the first start, open **⚙ Settings** (top right) → **Create app icon**. On a Mac CropKit then
-  appears in your Applications folder (and on the Desktop): drag it onto the Dock. On Windows it is on the Desktop and in
-  the Start menu. The icon starts CropKit without a Terminal window.
+- **Install as an app (recommended)**: after the first start, open **⚙ Settings** (top right) →
+  **Install CropKit as an app** and click **Install CropKit** in the browser tab that opens (needs Chrome, Edge or Brave).
+  CropKit then has its own icon in the Dock / taskbar (Mac: Applications, Launchpad, Spotlight; Windows: Start menu), its own
+  window and *Quit* in its menu – your normal browser windows never open with it. Keep it in the Dock: right-click its icon →
+  Options → Keep in Dock.
+  - If CropKit isn't running when you open the app, the app shows a **Start CropKit** button.
+  - Optional: **Start CropKit in the background when I log in** (⚙ Settings), so the app opens instantly.
+  - Without Chrome/Edge/Brave: ⚙ Settings → *Create a simple start icon instead*.
 - **Start file**: double-click `start.command` (Mac) / `start.bat` (Windows). CropKit opens in a Chrome / Edge / Brave
   "app window" if one of them is installed, otherwise in your default browser, at <http://127.0.0.1:5056>.
 - **Stop**: click **⏻ Quit** in the app, or close the Terminal window.

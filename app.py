@@ -261,6 +261,81 @@ def make_shortcut():
     return jsonify(res)
 
 
+# ---------------------------------------------------------------------------- installable app (PWA)
+SW_JS = r"""// CropKit service worker: only shows a "CropKit isn't running" page when the installed app is opened
+// while CropKit is stopped. Nothing is cached: the app always loads fresh from this computer.
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+const OFFLINE = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CropKit</title><style>
+body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#f3f4f6;color:#1d2330;
+font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center}
+.box{max-width:430px;padding:24px}h1{font-size:20px;margin:10px 0 8px}p{color:#6b7280;margin:6px 0 18px}
+a.btn{display:inline-block;background:#2f6fde;color:#fff;text-decoration:none;font-weight:600;padding:10px 20px;border-radius:10px}
+.small{font-size:12.5px}</style></head><body><div class="box"><div style="font-size:42px">✂️</div>
+<h1>CropKit isn't running</h1><p>CropKit just needs to be started on this computer.</p>
+<a class="btn" href="cropkit://start">▶ Start CropKit</a>
+<p class="small">If the button does nothing: double-click <b>start.command</b> (Mac) or <b>start.bat</b> (Windows) in the
+CropKit folder. This window opens CropKit as soon as it is running.</p></div>
+<script>setInterval(()=>fetch('/api/ping',{cache:'no-store'}).then(r=>{if(r.ok)location.reload()}).catch(()=>{}),2000)</script>
+</body></html>`;
+self.addEventListener('fetch', e => {
+  if (e.request.mode !== 'navigate') return;
+  e.respondWith(fetch(e.request).catch(() => new Response(OFFLINE, {headers: {'Content-Type': 'text/html; charset=utf-8'}})));
+});
+"""
+
+
+@app.get("/sw.js")
+def service_worker():
+    return Response(SW_JS, mimetype="text/javascript", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/manifest.webmanifest")
+def web_manifest():
+    data = {"name": "CropKit", "short_name": "CropKit", "id": "/", "start_url": "/", "scope": "/",
+            "display": "standalone", "launch_handler": {"client_mode": ["focus-existing", "auto"]},
+            "background_color": "#f3f4f6", "theme_color": "#f3f4f6",
+            "description": "Crop, resize and change the frame rate of videos and images",
+            "icons": [{"src": f"/static/icons/icon-{n}.png?v={VERSION}", "sizes": f"{n}x{n}", "type": "image/png",
+                       "purpose": "any"} for n in (192, 512)]}
+    return Response(json.dumps(data), mimetype="application/manifest+json", headers={"Cache-Control": "no-cache"})
+
+
+def _port_of_request() -> int:
+    return int(request.host.rsplit(":", 1)[-1]) if ":" in (request.host or "") else DEFAULT_PORT
+
+
+@app.get("/api/app-status")
+def app_status():
+    b = launcher.app_browser()
+    return jsonify(installed=launcher.installed_app(), autostart=launcher.autostart_enabled(),
+                   launcher=launcher.shortcut_exists(), browser=b and Path(str(b)).stem)
+
+
+@app.post("/api/install-app")
+def install_app():
+    """Prepare everything for the installed app, then open CropKit in a normal browser tab, where the
+    browser offers to install it ("Install CropKit")."""
+    port = _port_of_request()
+    try:   # the hidden helper that starts CropKit when the installed app is opened while CropKit is stopped
+        launcher.create_shortcut(port, LOG_PATH, VERSION, desktop=False, reveal=False)
+    except Exception:  # noqa: BLE001 - not essential for installing
+        pass
+    used = launcher.open_in_browser_tab(f"http://127.0.0.1:{port}/#install-app")
+    return jsonify(ok=True, browser=used)
+
+
+@app.post("/api/autostart")
+def autostart():
+    on = bool((request.get_json(silent=True) or {}).get("on"))
+    try:
+        res = launcher.set_autostart(on, _port_of_request(), LOG_PATH)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"Could not change it: {exc}") from exc
+    return jsonify(autostart=res)
+
+
 @app.post("/api/quit")
 def quit_app():
     cancel_all()

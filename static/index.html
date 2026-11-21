@@ -6,6 +6,9 @@
 <title>CropKit</title>
 <link rel="icon" href="/static/icons/icon-180.png" type="image/png">
 <link rel="apple-touch-icon" href="/static/icons/icon-180.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#f3f4f6">
+<meta name="apple-mobile-web-app-title" content="CropKit">
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -290,13 +293,23 @@
     <div class="modalhead"><h2>⚙ Settings</h2><button class="ghost" data-close>✕</button></div>
     <div class="modalbody single">
       <section class="sset">
-        <h3>App icon</h3>
+        <h3>Use CropKit as an app</h3>
         <div class="appicon">
           <img src="/static/icons/icon-180.png" alt="">
-          <p class="small" id="iconText">Use CropKit like a normal app: an icon in Applications / the Dock (Mac) or on the
-            Desktop / Start menu (Windows) that starts CropKit without the Terminal window.</p>
-          <button id="btnMakeIcon" class="primary">Create app icon</button>
+          <div id="appStatus" class="small">
+            Install CropKit as a real app: its own icon in the Dock (Mac) or taskbar (Windows), its own window,
+            and your browser never opens with it.
+          </div>
         </div>
+        <p class="inline" id="appActions">
+          <button id="btnInstallApp" class="primary">⬇ Install CropKit as an app</button>
+          <span class="small muted" id="installRes"></span>
+        </p>
+        <label class="chk row"><input type="checkbox" id="autostart"> Start CropKit in the background when I log in
+          <span class="info" data-help="autostart">i</span></label>
+        <p class="small muted" style="margin:6px 0 0">No Chrome, Edge or Brave?
+          <button class="linklike small" id="btnMakeIcon">Create a simple start icon instead</button>
+          <span id="iconText"></span></p>
       </section>
       <section class="sset">
         <h3>Updates</h3>
@@ -328,6 +341,20 @@
         <p class="inline"><button id="btnReset" class="ghost">Reset all settings</button>
           <span class="spacer"></span><button class="ghost" id="btnQuit2">⏻ Quit CropKit</button></p>
       </section>
+    </div>
+  </div>
+</div>
+
+<!-- ======================================================================= install (opened in a normal browser tab) -->
+<div id="installModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modalbox small">
+    <div class="modalhead"><h2>Install CropKit as an app</h2><button class="ghost" data-close>✕</button></div>
+    <div class="modalbody single">
+      <div class="appicon" style="margin:10px 0"><img src="/static/icons/icon-180.png" alt="">
+        <p class="small">CropKit gets its own icon in the Dock / taskbar, its own window and <i>Quit</i> in its menu – like any
+          other app. Nothing is downloaded: it is this same CropKit, on your computer.</p></div>
+      <div id="installBox"></div>
+      <p class="inline"><span class="spacer"></span><button data-close>Not now</button></p>
     </div>
   </div>
 </div>

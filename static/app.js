@@ -819,27 +819,77 @@ $("#btnMakeIcon").onclick = async () => {
   $("#btnMakeIcon").disabled = true;
   try {
     const d = await api("/api/shortcut", { desktop: true });
-    S.sys.shortcut = true; renderSettingsModal();
+    S.sys.shortcut = true; $("#iconText").textContent = "(✔ created)";
     toast("✔ App icon created. " + esc(d.hint), false, 12000);
   } catch (e) { toast(e.message, true, 8000); }
   $("#btnMakeIcon").disabled = false;
 };
 
 // ============================================================================ settings window
-function renderSettingsModal() {
+async function renderSettingsModal() {
   $("#setVersion").textContent = S.sys.version;
   $("#s_update_check").checked = !!S.settings.update_check;
   $("#s_update_auto").checked = !!S.settings.update_auto;
-  if (S.sys.shortcut) {
-    $("#btnMakeIcon").textContent = "Create again";
-    $("#btnMakeIcon").classList.remove("primary");
-    $("#iconText").textContent = "✔ CropKit has its own app icon on this computer. Create it again if you moved the CropKit folder.";
+  const st = await api("/api/app-status").catch(() => null);
+  if (!st) return;
+  $("#autostart").checked = !!st.autostart;
+  const mac = /Mac/.test(navigator.platform);
+  if (st.installed) {
+    $("#appStatus").innerHTML = `<b>✔ CropKit is installed as an app.</b> Use it from ${mac ? "Applications / Launchpad – and keep it in the Dock (right-click its Dock icon → Options → Keep in Dock)" : "the Start menu – right-click its taskbar icon → Pin to taskbar"}.`;
+    $("#btnInstallApp").classList.add("hidden");
+  } else {
+    $("#btnInstallApp").classList.remove("hidden");
+    if (!st.browser) $("#installRes").textContent = "Needs Chrome, Edge or Brave.";
   }
+  if (S.sys.shortcut || st.launcher) $("#iconText").textContent = "(✔ created)";
 }
 function openSettingsModal() { renderSettingsModal(); $("#settingsModal").classList.remove("hidden"); }
 $("#btnSettings").onclick = openSettingsModal;
 $$("[data-open=settings]").forEach((b) => (b.onclick = openSettingsModal));
 $("#btnSetCheck").onclick = () => { closeModals(); openUpdates(); };
+
+// ---------------------------------------------------------------- install as an app (PWA)
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installPrompt = e; drawInstallBox(); });
+window.addEventListener("appinstalled", () => {
+  installPrompt = null;
+  const mac = /Mac/.test(navigator.platform);
+  $("#installBox").innerHTML = `<p><b>✔ CropKit is installed.</b></p><ol class="small">
+    <li>${mac ? "It is in your <b>Applications</b> folder (also Launchpad and Spotlight). While it is open, right-click its Dock icon → <i>Options</i> → <b>Keep in Dock</b>."
+               : "It is in the <b>Start menu</b>. While it is open, right-click its taskbar icon → <b>Pin to taskbar</b>."}</li>
+    <li>From now on, open CropKit with that icon. Your browser won't open with it any more.</li>
+    <li>You can close this browser tab.</li></ol>`;
+});
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => { /* not essential */ });
+function drawInstallBox() {
+  const box = $("#installBox"); if (!box) return;
+  if (installPrompt) {
+    box.innerHTML = '<p><button class="go big" id="btnDoInstall">⬇ Install CropKit</button></p>';
+    $("#btnDoInstall").onclick = async () => { installPrompt.prompt(); await installPrompt.userChoice.catch(() => null); };
+  } else if (!box.innerHTML.includes("✔")) {
+    box.innerHTML = `<p class="small">Use your browser's install option:</p><ul class="small">
+      <li><b>Chrome / Brave</b>: the install icon ⊕ at the right of the address bar, or menu ⋮ → <i>Cast, save and share</i> → <b>Install page as app…</b></li>
+      <li><b>Edge</b>: menu … → <i>Apps</i> → <b>Install this site as an app</b></li></ul>`;
+  }
+}
+$("#btnInstallApp").onclick = async () => {
+  if (installPrompt) { installPrompt.prompt(); return; }
+  try {
+    const d = await api("/api/install-app", {});
+    $("#installRes").textContent = `CropKit opened in ${d.browser || "your browser"} – click “Install CropKit” there.`;
+  } catch (e) { toast(e.message, true); }
+};
+$("#autostart").onchange = async (e) => {
+  try {
+    const d = await api("/api/autostart", { on: e.target.checked }); e.target.checked = d.autostart;
+    toast(d.autostart ? "CropKit will start in the background when you log in, so the app opens instantly." : "CropKit won't start by itself any more.");
+  } catch (err) { e.target.checked = !e.target.checked; toast(err.message, true); }
+};
+if (location.hash === "#install-app") {
+  history.replaceState(null, "", "/");
+  drawInstallBox(); $("#installModal").classList.remove("hidden");
+  setTimeout(drawInstallBox, 1500);
+}
 
 // ============================================================================ updates
 const U = { info: null };

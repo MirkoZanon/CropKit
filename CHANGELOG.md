@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0
+- **Install CropKit as a real app** (⚙ Settings → *Install CropKit as an app*, with Chrome, Edge or Brave): its own icon in the
+  Dock / taskbar, its own window and *Quit* in its menu – and your browser no longer opens together with CropKit.
+- Once installed, CropKit always opens in that app (also from start.command and the start icon).
+- If CropKit isn't running when you open the app, the app shows a **Start CropKit** button.
+- New option: **start CropKit in the background when you log in**, so the app opens instantly.
+
 ## 1.3.0
 - **Simpler, cleaner look** (in the style of PaperShelf).
 - **Home**: first what to do (Crop / Resize / Frame rate, or a recipe), then your folder – recent folders are one click away.
