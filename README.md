@@ -93,7 +93,8 @@ because it supports the hardware video decoder. Check in **Help → System check
    - Drag a point to move it · drag the picture to move around · mouse wheel / pinch to zoom · <kbd>F</kbd> = fit.
    - For videos, the slider shows preview frames from start to end (<kbd>←</kbd> <kbd>→</kbd>); **🔍 Full resolution** loads the
      current moment at full size.
-   - Camera didn't move? Draw once, then **⇉ Copy to other files**.
+   - Camera didn't move? Choose **Same area for all files** at the top of the step: draw once, every file of the same
+     size gets it (files of another size keep their own).
 4. **Settings** – one card per thing you chose, with its main setting and a *How it's done* note; details under
    *More options*. Technical options (speed, app, updates) are in **⚙ Settings**.
 5. **Review & process** – what will happen, in order. Files processed before? Choose: skip them, process them again, or

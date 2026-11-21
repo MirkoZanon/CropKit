@@ -298,3 +298,7 @@ label.row { display: flex; align-items: center; gap: 7px; margin: 8px 0; }
   font-size: 12.3px; line-height: 1.45; color: #34405a; }
 .how:empty { display: none; }
 .how b.ht { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); margin-bottom: 2px; }
+
+.areamode { display: flex; align-items: center; gap: 8px; padding: 0 14px 10px; flex-wrap: wrap; }
+.areamode .seg label span { padding: 5px 12px; }
+.areamode .seg label span { white-space: nowrap; }

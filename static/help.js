@@ -69,6 +69,10 @@ window.INFO = {
   parallel: `<p>How many videos are processed at the same time. 2–3 is usually fastest; more can slow things down.</p>`,
   preset: `<p>MP4 encoding speed. Faster = slightly bigger files. <b>veryfast</b> is a good balance.</p>`,
   preview_n: `<p>How many preview frames the slider has for each video (spread from start to end). Fewer = loads faster.</p>`,
+  same_area: `<p><b>Same area for all files</b>: when the camera didn't move, draw the area once – saving it gives the same
+    area to every selected file. Change it later and save again: all files get the new one.</p>
+    <p>Only files with the same pixel size get it (an area is in pixels). Files of another size are listed and keep their own.</p>
+    <p>Tip: flip through the files (and the frames of each video) to check the area fits everywhere.</p>`,
   autostart: `<p>CropKit starts quietly when you log in (no window), so the app opens instantly when you click it.
     It uses almost no memory while waiting. Stop it any time with <b>Quit CropKit</b>.</p>`,
   update_check: `<p>CropKit asks GitHub (anonymously) about twice a day whether a newer version exists.

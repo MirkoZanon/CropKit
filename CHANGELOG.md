@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.0
+- **Same area for all files** (top of the *Draw areas* step): when the camera didn't move, draw the area once and every
+  selected file of the same pixel size gets it. Changing it later updates all of them. Files of another size are listed and
+  keep their own area.
+
 ## 1.6.0
 - **Step by step**: after choosing a folder CropKit guides you one step at a time – **Files → Draw areas → Settings →
   Review & process** – with Back / Next. Each step shows only what it needs; *Process* is only at the end, and *Next* unlocks

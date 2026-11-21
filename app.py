@@ -61,6 +61,7 @@ DEFAULTS = {
     "overwrite": False,
     "preview_n": 40,
     "default_shape": "circle",
+    "same_area": False,             # draw step: one area for all selected files (fixed camera)
     "recent_folders": [],
     "update_check": True,           # look for new versions on GitHub (once every 12 h)
     "update_auto": True,            # install them automatically when CropKit starts
@@ -121,7 +122,7 @@ def clean_settings(new: dict, old: dict) -> dict:
     choice("transparent_video_format", ("mov", "webm")); choice("image_format", ("same", "png", "jpg", "webp", "tif"))
     choice("preset", ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"))
     choice("no_roi", ("skip", "full")); choice("default_shape", media.SHAPES)
-    for k in ("uniform", "audio", "hwaccel", "overwrite", "update_check", "update_auto", "allow_upscale"):
+    for k in ("uniform", "audio", "hwaccel", "overwrite", "update_check", "update_auto", "allow_upscale", "same_area"):
         flag(k)
     if "background" in new:
         bg = str(new["background"]).strip()
@@ -477,7 +478,7 @@ def set_roi():
 
 @app.post("/api/roi/copy")
 def copy_roi():
-    """Copy one file's ROI to other files. Body: {folder, name, targets: "missing"|"all"}"""
+    """Copy one file's ROI to other files. Body: {folder, name, targets: "missing"|"all", names: [optional subset]}"""
     d = request.get_json(force=True) or {}
     f = _file(d.get("folder"), d.get("name"))
     folder = f.parent
@@ -487,8 +488,9 @@ def copy_roi():
         if not src:
             raise ValueError("This file has no saved ROI yet.")
         copied, skipped = [], []
+        only = set(d["names"]) if isinstance(d.get("names"), list) else None
         for p in media.list_media(folder):
-            if p.name == f.name or (d.get("targets") != "all" and p.name in rois):
+            if p.name == f.name or (only is not None and p.name not in only) or (d.get("targets") != "all" and p.name in rois):
                 continue
             try:
                 W, H = media.media_info(p)["size"]

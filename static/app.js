@@ -258,7 +258,8 @@ function explain() {
 function updateStepHint() {
   const sel = S.files.filter((f) => S.checked.has(f.name)), n = sel.length, drawn = sel.filter((f) => f.roi).length;
   $("#stepIcon").textContent = "✏️";
-  $("#editorTitle").textContent = n && drawn === n ? "All areas drawn – press Next ▶" : "Draw the area to keep on each file";
+  $("#editorTitle").textContent = n && drawn === n ? "All areas drawn – press Next ▶"
+    : S.settings && S.settings.same_area ? "Draw the area once – it is used for all files" : "Draw the area to keep on each file";
   $("#drawProgress").textContent = n ? `${drawn} of ${n} drawn` : "";
   $("#drawProgress").classList.toggle("alldone", n > 0 && drawn === n);
 }
@@ -689,14 +690,52 @@ async function saveRoi() {
   try {
     const d = await api("/api/roi", { folder: S.folder, name: f.name, shape: S.shape, points: S.pts });
     f.roi = d.roi; S.prevRoi = d.roi; S.dirty = false;
+    if (S.settings.same_area && cropOn()) await applySameArea(f.name, true);
     renderFiles(); renderRunSummary(); draw();
     return true;
   } catch (e) { toast(e.message, true); return false; }
 }
+// ---------------------------------------------------------------- one area for all files (fixed camera)
+async function applySameArea(fromName, quiet = false) {
+  const names = selectedFiles().map((f) => f.name);
+  try {
+    const d = await api("/api/roi/copy", { folder: S.folder, name: fromName, targets: "all", names });
+    await refreshFiles();
+    S.sizeSkipped = d.skipped || [];
+    const msg = `Area of “${esc(fromName)}” used for ${d.copied.length + 1} file${d.copied.length ? "s" : ""}.` +
+      (S.sizeSkipped.length ? ` <b>${S.sizeSkipped.length} file${S.sizeSkipped.length === 1 ? " has" : "s have"} a different size</b> – give ${S.sizeSkipped.length === 1 ? "it its" : "them their"} own area (⬜️ on the left).` : "");
+    if (!quiet || S.sizeSkipped.length) toast(msg, false, 7000);
+    updateAreaMode();
+  } catch (e) { toast(e.message, true); }
+}
+function updateAreaMode() {
+  const same = !!(S.settings && S.settings.same_area);
+  $$("input[name=areamode]").forEach((r) => (r.checked = r.value === (same ? "same" : "each")));
+  $("#btnSaveNext").innerHTML = same ? "✔ Use for all files ▶" : "✔ Save · next file ▶";
+  const sk = (S.sizeSkipped || []).filter((n) => S.checked.has(n));
+  $("#areaModeNote").innerHTML = same ? (sk.length ? `${sk.length} file(s) of another size need their own area`
+                                                   : "draw once – every file of the same size gets it") : "";
+}
+$$("input[name=areamode]").forEach((r) => (r.onchange = async () => {
+  const same = r.value === "same";
+  await saveSettings({ same_area: same });
+  updateAreaMode(); updateStepHint();
+  if (!same || S.cur < 0) return;
+  const f = S.files[S.cur];
+  const valid = roiFromPoints(S.shape, S.pts);
+  if (!valid && !f.roi) { toast("Now draw the area once – saving it gives it to every file."); return; }
+  const others = selectedFiles().filter((g) => g.name !== f.name && g.roi).length;
+  if (others && !confirm(`Give the area of “${f.name}” to all selected files? ${others} file(s) that already have their own area will get this one instead.`)) return;
+  if (S.dirty && valid) await saveRoi();            // saving applies it to all
+  else await applySameArea(f.name);
+}));
+
 async function saveAndNext() {
   if (S.cur < 0) return;
   if (cropOn() && !(S.files[S.cur].roi && !S.dirty) && !(await saveRoi())) return;
-  const nxt = S.files.findIndex((g, k) => k > S.cur && S.checked.has(g.name));
+  // next selected file that still needs an area (in "same area" mode most already have it)
+  let nxt = S.files.findIndex((g, k) => k > S.cur && S.checked.has(g.name) && (!S.settings.same_area || !g.roi));
+  if (nxt < 0 && S.settings.same_area) nxt = S.files.findIndex((g) => S.checked.has(g.name) && !g.roi);
   if (nxt >= 0) openFile(nxt);
   else toast(missingAreas().length ? `${missingAreas().length} file(s) still need an area (marked ⬜️ on the left).`
                                    : "✔ All areas drawn – press <b>Next: Settings ▶</b>.", false, 6000);
@@ -991,7 +1030,7 @@ function applyTasks() {
     ? (t.resize && s.resize_mode === "fit" ? `Every result is ${s.out_w} × ${s.out_h}, the picture centred.` : "Every result gets the size of the biggest one.")
     : "Each result is only as big as its own picture.";
   $("#drawInfo").dataset.help = t.crop ? "draw" : "preview";
-  $("#btnSaveNext").innerHTML = "✔ Save · next file ▶";
+  updateAreaMode();
   $("#settingsSub").textContent = "Done in this order: " + ["fps", "crop", "resize"].filter((k) => t[k])
     .map((k) => ({ fps: "frame rate", crop: "crop", resize: "resize" }[k])).concat(["save"]).join(" → ");
   renderChips(); renderFiles(); renderRunSummary(); draw();

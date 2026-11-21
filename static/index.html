@@ -119,6 +119,15 @@
       <div class="spacer"></div>
       <div class="progresschip roiOnly" id="drawProgress"></div>
     </div>
+    <div class="areamode" id="areaModeRow">
+      <span class="small muted">Area:</span>
+      <div class="seg small" id="areaMode">
+        <label><input type="radio" name="areamode" value="each"><span>Each file its own</span></label>
+        <label><input type="radio" name="areamode" value="same"><span>Same area for all files</span></label>
+      </div>
+      <span class="info" data-help="same_area">i</span>
+      <span class="small muted" id="areaModeNote"></span>
+    </div>
     <div class="toolbar" id="cropTools">
       <div class="seg" id="shapeButtons">
         <button data-shape="circle" title="Circle: click 3+ points on the edge">◯ Circle</button>
