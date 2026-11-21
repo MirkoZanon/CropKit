@@ -1,12 +1,16 @@
 # CropKit
 
-Crop **videos and images** to the part you care about, make them smaller (**resolution** and **frame rate**)
-and save them all in **one common format**: ready for tracking with [DeepLabCut](https://github.com/DeepLabCut/DeepLabCut),
-or as clean clips and pictures for a **presentation**.
+<img src="static/icons/icon-512.png" width="96" align="right" alt="CropKit icon">
+
+**Crop**, **resize** and change the **frame rate** of **videos and images** – one of these, or any combination – and save
+them all in **one common format**: ready for tracking with [DeepLabCut](https://github.com/DeepLabCut/DeepLabCut),
+smaller files to share, or clean clips and pictures for a **presentation**.
 
 It runs **on your own computer** (Mac, Windows or Linux). The browser is only its window: nothing is uploaded anywhere.
 
+- A **Home screen** where you pick what to do (Crop / Resize / Frame rate) or a ready-made recipe.
 - Draw the area to keep: **circle**, **rectangle**, **square**, **polygon** (any shape) or the **whole frame**.
+- Resize: fit inside a box, exact size (borders / fill / stretch) or a percentage.
 - Outside the area: **black**, **white**, any **colour** or **transparent**.
 - All outputs **the same size** with the area centred (DeepLabCut), or **just the crop**.
 - Fast: preview frames load in the background; videos are processed in one ffmpeg pass,
@@ -56,7 +60,10 @@ because it supports the hardware video decoder. Check in **Help → System check
 
 ## 2. Start and stop
 
-- **Start**: double-click `start.command` (Mac) / `start.bat` (Windows). CropKit opens in a Chrome / Edge / Brave
+- **App icon (recommended)**: after the first start, click **Create app icon** on the Home screen. On a Mac CropKit then
+  appears in your Applications folder (and on the Desktop): drag it onto the Dock. On Windows it is on the Desktop and in
+  the Start menu. The icon starts CropKit without a Terminal window.
+- **Start file**: double-click `start.command` (Mac) / `start.bat` (Windows). CropKit opens in a Chrome / Edge / Brave
   "app window" if one of them is installed, otherwise in your default browser, at <http://127.0.0.1:5056>.
 - **Stop**: click **⏻ Quit** in the app, or close the Terminal window.
 - If you close only the window, CropKit keeps running: double-click the start file again (it just reopens the window).
@@ -64,8 +71,10 @@ because it supports the hardware video decoder. Check in **Help → System check
 
 ## 3. How to use it
 
-1. **Open folder** – the folder with your videos and/or images. They are listed on the left.
-2. **Draw the area to keep** on each file, then **Save & next** (<kbd>Enter</kbd>):
+1. **Home** – tick what you want to do: **✂️ Crop**, **⤡ Resize**, **⏱ Frame rate** (any combination), or click a recipe.
+   Press **Continue**. (Click the CropKit logo to come back to Home.)
+2. **Open folder** – the folder with your videos and/or images. They are listed on the left.
+3. If you crop: **draw the area to keep** on each file, then **Save & next** (<kbd>Enter</kbd>):
 
    | Shape | How |
    |---|---|
@@ -78,29 +87,37 @@ because it supports the hardware video decoder. Check in **Help → System check
    - For videos, the slider shows preview frames from start to end (<kbd>←</kbd> <kbd>→</kbd>); **🔍 Full resolution** loads the
      current moment at full size.
    - Camera didn't move? Draw once, then **⇉ Copy to other files**.
-3. **Output settings** on the right – or press a **Quick setup** button: *DeepLabCut*, *Presentation*, *Only downsample*.
-4. **▶ Process**. One progress bar per file (%, time left, speed). New files go to `cropped/` inside your folder
+4. **Settings** on the right – only those for the tasks you chose are shown.
+5. **▶ Process**. One progress bar per file (%, time left, speed). New files go to `cropped/` inside your folder
    (or the output folder you chose).
 
 The areas you draw are saved in `rois.json` next to your files, so you can stop and continue later,
 or process the same files again with different settings.
+
+**Order of the steps.** Whatever you combine, CropKit works in one pass in this order:
+**drop frames → crop → resize → background / border → save** – frames first (every later step only touches the frames you
+keep), crop before resize (exact area, no work on pixels that are thrown away), and the file is encoded only once.
+
+**Recipes:** *DeepLabCut* (crop arena, 720 × 720, 10 fps) · *Clip for slides* (crop, transparent outside) ·
+*Smaller videos* (max 1280 × 720, 30 fps) · *Only frame rate* (10 fps) · *Half size* (50 %).
 
 ## 4. Settings
 
 | Setting | What it does |
 |---|---|
 | Output folder | Empty = `cropped` inside the opened folder. |
-| Fit into W × H | The crop is scaled to fit inside this box (proportions kept). |
-| Keep original resolution | No scaling. |
+| Resize: fit inside a box | Scaled to fit inside W × H (proportions kept); optionally also enlarges smaller pictures. |
+| Resize: exact size | Exactly W × H – add borders, fill the frame (cut the edges) or stretch. |
+| Resize: percentage | e.g. 50 % = half width and height. |
 | All outputs the same size | On: identical frame size, area centred, border = background. Off: just the crop. |
 | Scaling between files | *Each ROI fills the frame* (same px/cm if the arena has the same real size) or *same zoom for every file*. |
 | Background | black / white / any colour / transparent. |
 | Transparent videos saved as | `.mov` ProRes 4444 (Keynote, Final Cut, Premiere…) or `.webm` VP9 (web). |
-| Frame rate | Frames per second of the videos (extra frames are dropped). *Keep original* = unchanged. |
+| Frame rate | Frames per second of the videos (extra frames are dropped). |
 | Quality | x264 CRF: lower = better & bigger (18–22 recommended). |
 | Keep sound | Copy the audio track. |
 | Images: save as | same as original / PNG / JPEG / WebP / TIFF (transparent → PNG instead of JPEG). |
-| Files without ROI | skip them, or process the whole frame (only downsample). |
+| Files without area | (crop) skip them, or process the whole frame. |
 | Advanced | hardware decoding, videos in parallel, encoding speed, preview frames, overwrite existing outputs. |
 
 Settings are remembered in `~/.cropkit/settings.json`.
@@ -115,7 +132,7 @@ In the output folder:
 
 ## 6. DeepLabCut
 
-- Use the **DeepLabCut** quick setup: black outside, all outputs 720 × 720 (ROI centred), 10 fps, MP4 H.264.
+- Use the **DeepLabCut** recipe on the Home screen: crop the arena, black outside, all outputs 720 × 720, 10 fps, MP4 H.264.
 - With *each ROI fills the frame*, if the arena has the same real size in all videos, one **pixel → cm** factor works for all.
 - Back to original coordinates (values in `processing_params.json`):
   `x_original = (x_output − roi_offset_out_px[0]) / scale_out_per_in[0] + crop_origin_in_px[0]` (y with index 1).
@@ -145,7 +162,7 @@ CropKit updates itself from this GitHub page:
 app.py        Flask server: API, background jobs, settings, updates (port 5056)
 updater.py    checks GitHub for new versions and installs them (update.json = which repository)
 media.py      processing engine: ROIs, masks, sizes, ffmpeg (videos) and Pillow (images)
-launcher.py   opens the app window (Chrome/Edge/Brave --app, else default browser)
+launcher.py   opens the app window (Chrome/Edge/Brave --app) and creates the app icon (static/icons/)
 static/       the interface: index.html, app.css, app.js, help.js (texts of Help and (i) buttons)
 extras/       Jupyter notebook version
 ```
@@ -158,9 +175,9 @@ The engine can also be used from Python:
 ```python
 import media
 roi = media.roi_from_points("circle", [(1000, 1080), (2900, 1080), (1950, 130)], 3840, 2160)
-size = media.plan_sizes({"a": roi}, ["a"], 720, 720)["a"]
-media.process_video("in.mp4", "out.mp4", roi, size, canvas=(720, 720), fps=10, background="black")
-media.process_image("in.jpg", "out.png", roi, size, canvas=None, background="transparent")
+p = media.plan_outputs({"a": roi}, ["a"], dict(resize=True, resize_mode="fit", out_w=720, out_h=720))["a"]
+media.process_video("in.mp4", "out.mp4", roi, p["size"], p["canvas"], fps=10, background="black", post=p["post"])
+media.process_image("in.jpg", "out.png", roi, p["size"], p["canvas"], background="transparent", post=p["post"])
 ```
 
 ## 10. Publishing a new version (maintainers)

@@ -25,6 +25,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 
 import media
 import updater
+import launcher
 from launcher import open_ui
 
 APP_DIR = Path(__file__).resolve().parent
@@ -32,16 +33,21 @@ VERSION = updater.read_version()
 DATA_DIR = Path.home() / ".cropkit"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 BACKUP_DIR = DATA_DIR / "backups"          # app backups made before each update
+LOG_PATH = DATA_DIR / "cropkit.log"         # output when started from the app icon (no Terminal)
 DEFAULT_PORT = 5056
 
 DEFAULTS = {
+    "tasks": {"crop": True, "resize": True, "fps": True},   # what to do (chosen on the Home screen)
     "output_dir": "",               # "" -> <input folder>/<output_subfolder>
     "output_subfolder": "cropped",
-    "size_mode": "box",             # "box" = fit into out_w x out_h, "original" = keep resolution
+    "resize_mode": "fit",           # "fit" inside out_w x out_h | "exact" out_w x out_h | "percent"
     "out_w": 720, "out_h": 720,
+    "percent": 50,
+    "exact_fit": "pad",             # exact size: "pad" (borders) | "fill" (cut edges) | "stretch"
+    "allow_upscale": False,         # fit: also enlarge pictures smaller than the box
     "uniform": True,                # all outputs the same frame size (ROI centred)
     "scale_mode": "fit",            # "fit" | "same_scale"
-    "fps": 10,                      # 0 = keep original
+    "fps": 10,
     "background": "black",          # colour, or "transparent"
     "transparent_video_format": "mov",
     "image_format": "same",         # same | png | jpg | webp | tif
@@ -70,9 +76,13 @@ app.json.sort_keys = False
 def load_settings() -> dict:
     s = dict(DEFAULTS)
     try:
-        s.update(json.loads(SETTINGS_FILE.read_text()))
+        old = json.loads(SETTINGS_FILE.read_text())
+        if "tasks" not in old and old.get("size_mode") == "original":   # settings of version 1.0/1.1
+            old["tasks"] = {"crop": True, "resize": False, "fps": True}
+        s.update(old)
     except Exception:
         pass
+    s["tasks"] = {**DEFAULTS["tasks"], **(s.get("tasks") or {})}
     return s
 
 
@@ -102,12 +112,16 @@ def clean_settings(new: dict, old: dict) -> dict:
     num("out_w", 16, 16384); num("out_h", 16, 16384)
     s["out_w"] -= s["out_w"] % 2; s["out_h"] -= s["out_h"] % 2
     num("fps", 0, 240, float)
+    num("percent", 1, 1000, float)
     num("jpeg_quality", 10, 100); num("crf", 0, 51); num("parallel", 1, 8); num("preview_n", 5, 200)
-    choice("size_mode", ("box", "original")); choice("scale_mode", ("fit", "same_scale"))
+    choice("resize_mode", ("fit", "exact", "percent")); choice("exact_fit", ("pad", "fill", "stretch"))
+    choice("scale_mode", ("fit", "same_scale"))
+    if isinstance(new.get("tasks"), dict):
+        s["tasks"] = {k: bool(new["tasks"].get(k, s["tasks"].get(k))) for k in ("crop", "resize", "fps")}
     choice("transparent_video_format", ("mov", "webm")); choice("image_format", ("same", "png", "jpg", "webp", "tif"))
     choice("preset", ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"))
     choice("no_roi", ("skip", "full")); choice("default_shape", media.SHAPES)
-    for k in ("uniform", "audio", "hwaccel", "overwrite", "update_check", "update_auto"):
+    for k in ("uniform", "audio", "hwaccel", "overwrite", "update_check", "update_auto", "allow_upscale"):
         flag(k)
     if "background" in new:
         bg = str(new["background"]).strip()
@@ -194,7 +208,8 @@ def ping():
 @app.get("/api/state")
 def state():
     ucfg = updater.config()
-    return jsonify(version=VERSION, settings=SETTINGS, update_repo=ucfg["repo"], git_copy=updater.is_git_checkout(), defaults=DEFAULTS, platform=sys.platform,
+    return jsonify(version=VERSION, settings=SETTINGS, update_repo=ucfg["repo"], git_copy=updater.is_git_checkout(),
+                   shortcut=launcher.shortcut_exists(), defaults=DEFAULTS, platform=sys.platform,
                    ffmpeg=media.FFMPEG, ffmpeg_version=media.ffmpeg_version(),
                    video_exts=sorted(media.VIDEO_EXTS), image_exts=sorted(media.IMAGE_EXTS),
                    python=sys.version.split()[0])
@@ -232,6 +247,18 @@ def reveal_route():
         raise FileNotFoundError(f"{p} does not exist (yet)")
     reveal(p)
     return jsonify(ok=True)
+
+
+@app.post("/api/shortcut")
+def make_shortcut():
+    """Create the CropKit app icon (Mac: Applications + Desktop; Windows: Desktop + Start menu)."""
+    port = int(request.host.rsplit(":", 1)[-1]) if ":" in (request.host or "") else DEFAULT_PORT
+    desktop = (request.get_json(silent=True) or {}).get("desktop", True) is not False
+    try:
+        res = launcher.create_shortcut(port, LOG_PATH, VERSION, desktop=desktop)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise RuntimeError(f"The icon could not be created: {exc}") from exc
+    return jsonify(res)
 
 
 @app.post("/api/quit")
@@ -399,15 +426,17 @@ def _run_job(job, s, folder: Path, out_dir: Path):
     dst = out_dir / job["output"]
     try:
         if job["kind"] == "image":
-            media.process_image(src, dst, job["roi"], tuple(job["size"]), job["canvas"], s["background"], s["jpeg_quality"])
+            media.process_image(src, dst, job["roi"], tuple(job["size"]), job["canvas"], s["background"],
+                                s["jpeg_quality"], post=job["post"])
             _job_update(job, status="done", progress=1.0, text="done", finished=time.time())
             return
         def prog(frac, text):
             _job_update(job, progress=round(frac, 4), text=text)
         ok, mode, err = media.process_video(
-            src, dst, job["roi"], tuple(job["size"]), job["canvas"], s["fps"] or None, s["background"],
+            src, dst, job["roi"], tuple(job["size"]), job["canvas"], job["fps"], s["background"],
             s["crf"], s["preset"], s["hwaccel"], s["audio"], work_dir=out_dir / "_logs",
-            log_path=out_dir / "_logs" / (src.stem + ".log"), progress=prog, cancel=RUN.cancel, procs=RUN.procs)
+            log_path=out_dir / "_logs" / (src.stem + ".log"), progress=prog, cancel=RUN.cancel, procs=RUN.procs,
+            post=job["post"])
         if ok:
             _job_update(job, status="done", progress=1.0, text=f"done · {mode}", finished=time.time())
         elif RUN.cancel.is_set():
@@ -430,12 +459,16 @@ def _write_params(folder, out_dir, jobs, s):
             continue
         x0, y0, w, h = media.crop_box(j["roi"])
         sw, sh = j["size"]
-        cw, ch = j["canvas"] or j["size"]
+        fw, fh = j["post"] or j["size"]
+        cw, ch = j["canvas"] or (fw, fh)
+        # where pixel (0,0) of the scaled crop lands in the output (negative when "fill" cut the edges)
+        ox = (cw - fw) // 2 - (sw - fw) // 2
+        oy = (ch - fh) // 2 - (sh - fh) // 2
         params["files"][j["name"]] = dict(
-            output=j["output"], roi=j["roi"], crop_origin_in_px=[x0, y0], crop_size_in_px=[w, h],
+            output=j["output"], tasks=s["tasks"], roi=j["roi"], crop_origin_in_px=[x0, y0], crop_size_in_px=[w, h],
             roi_size_out_px=[sw, sh], scale_out_per_in=[sw / w, sh / h],
-            roi_offset_out_px=[(cw - sw) // 2, (ch - sh) // 2], output_size=[cw, ch],
-            fps=(s["fps"] or None) if j["kind"] == "video" else None, background=s["background"],
+            roi_offset_out_px=[ox, oy], output_size=[cw, ch],
+            fps=j["fps"] if j["kind"] == "video" else None, background=s["background"],
             processed=time.strftime("%Y-%m-%d %H:%M:%S"))
     params["how_to_map_back"] = ("x_original = (x_output - roi_offset_out_px[0]) / scale_out_per_in[0] + "
                                  "crop_origin_in_px[0]   (same for y with index 1)")
@@ -454,33 +487,38 @@ def process():
     out_dir = output_dir_for(folder, s)
     if out_dir.resolve() == folder.resolve():
         raise ValueError("The output folder must be different from the input folder.")
+    tasks = s["tasks"]
+    if not any(tasks.values()):
+        raise ValueError("Choose at least one thing to do on the Home screen (crop, resize or frame rate).")
     names = d.get("names")
-    rois = media.load_rois(folder)
+    rois = media.load_rois(folder) if tasks["crop"] else {}
     all_files = {p.name: p for p in media.list_media(folder)}
     names = [n for n in (names if names is not None else all_files) if n in all_files]
-    plan, skipped = {}, []
+    plan_rois, skipped = {}, []
     for n in names:
         roi = rois.get(n)
-        if roi is None and s["no_roi"] == "full":
+        if roi is None and (not tasks["crop"] or s["no_roi"] == "full"):
             W, H = media.media_info(all_files[n])["size"]
             roi = media.roi_from_points("full", [], W, H)
         if roi is None:
             skipped.append(n); continue
-        plan[n] = roi
-    if not plan:
-        raise ValueError("Nothing to process: none of the selected files has an ROI "
-                         "(draw one, or set 'Files without ROI' to 'full frame').")
-    if any(media.media_kind(n) == "video" for n in plan) and not media.FFMPEG:
+        plan_rois[n] = roi
+    if not plan_rois:
+        raise ValueError("Nothing to process: none of the selected files has an area drawn "
+                         "(draw one, or set 'Files without area' to 'whole frame').")
+    if any(media.media_kind(n) == "video" for n in plan_rois) and not media.FFMPEG:
         raise RuntimeError("ffmpeg is needed for videos but was not found (see Help → System check).")
-    sizes = media.plan_sizes(plan, list(plan), s["out_w"], s["out_h"], s["size_mode"], s["scale_mode"])
-    canvas = media.uniform_canvas(sizes, s["out_w"], s["out_h"], s["size_mode"]) if s["uniform"] else None
+    plan = media.plan_outputs(plan_rois, list(plan_rois), {**s, "resize": tasks["resize"]})
+    fps = (s["fps"] or None) if tasks["fps"] else None
     out_dir.mkdir(parents=True, exist_ok=True)
     jobs = []
-    for n, roi in plan.items():
+    for n, roi in plan_rois.items():
         kind = media.media_kind(n)
         output = Path(n).stem + media.output_ext(kind, n, s)
-        job = dict(id=uuid.uuid4().hex[:8], name=n, kind=kind, output=output, roi=roi, size=list(sizes[n]),
-                   canvas=list(canvas) if canvas else None, status="queued", progress=0.0, text="waiting")
+        pl = plan[n]
+        job = dict(id=uuid.uuid4().hex[:8], name=n, kind=kind, output=output, roi=roi, size=list(pl["size"]),
+                   post=list(pl["post"]) if pl["post"] else None, canvas=list(pl["canvas"]) if pl["canvas"] else None,
+                   fps=fps if kind == "video" else None, status="queued", progress=0.0, text="waiting")
         if (out_dir / output).exists() and not s["overwrite"]:
             job.update(status="skipped", progress=1.0, text="already exists (turn on 'Overwrite' to redo)")
         jobs.append(job)
@@ -676,6 +714,13 @@ def main():
     logging.getLogger("werkzeug").setLevel(logging.WARNING)      # no line per request in the terminal
     if not a.no_browser:
         threading.Timer(0.8, lambda: open_ui(url)).start()
+
+    def _refresh_icons():
+        try:
+            launcher.refresh_launchers(a.port, LOG_PATH, VERSION)
+        except Exception:  # noqa: BLE001 - never stop the app for an icon
+            pass
+    threading.Thread(target=_refresh_icons, daemon=True).start()
     from werkzeug.serving import make_server
     srv = make_server("127.0.0.1", a.port, app, threaded=True)
     SERVER["srv"] = srv

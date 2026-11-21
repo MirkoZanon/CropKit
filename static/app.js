@@ -32,6 +32,9 @@ const S = {
   view: { s: 1, ox: 0, oy: 0 }, polling: null,
 };
 
+const T = () => (S.settings && S.settings.tasks) || { crop: true, resize: true, fps: true };
+const cropOn = () => !!T().crop;
+
 // ============================================================================ geometry (mirror of media.py)
 function fitCircle(pts) {
   let sxx = 0, sxy = 0, sx = 0, syy = 0, sy = 0, n = pts.length, bx = 0, by = 0, b1 = 0;
@@ -119,6 +122,7 @@ function draw() {
   const v = S.view;
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(S.img, v.ox, v.oy, S.W * v.s, S.H * v.s);
+  if (!cropOn()) { updateStatus(null); return; }
   const roi = roiFromPoints(S.shape, S.pts);
   if (roi && roi.shape !== "full") {
     const p = new Path2D(); p.rect(0, 0, cv._w, cv._h); roiPath(roi, p);
@@ -148,6 +152,11 @@ function draw() {
 function updateStatus(roi = roiFromPoints(S.shape, S.pts)) {
   const f = S.files[S.cur];
   if (!f) { $("#hud").textContent = ""; $("#status").innerHTML = "—"; return; }
+  if (!cropOn()) {
+    $("#hud").textContent = "preview · drag = move · wheel = zoom";
+    $("#status").innerHTML = `whole picture ${S.W} × ${S.H} px` + (S.info && S.info.kind === "video" && S.info.fps ? ` · ${S.info.fps} fps` : "");
+    return;
+  }
   const n = S.pts.length, need = NEED[S.shape];
   let hud = `${S.shape}: ${HINT[S.shape]}`;
   if (S.shape !== "full") hud += ` · ${n} point${n === 1 ? "" : "s"}` + (n < need ? ` (need ${need})` : "");
@@ -175,6 +184,7 @@ function updateStatus(roi = roiFromPoints(S.shape, S.pts)) {
 // ---------------------------------------------------------------- mouse / keys
 let drag = null;
 function hitPoint(sx, sy) {
+  if (!cropOn()) return -1;
   let best = -1, bd = 10;
   S.pts.forEach((q, i) => { const [x, y] = toScreen(q); const d = Math.hypot(x - sx, y - sy); if (d < bd) { bd = d; best = i; } });
   return best;
@@ -213,6 +223,7 @@ cv.addEventListener("wheel", (e) => {
 }, { passive: false });
 
 function addPoint(p) {
+  if (!cropOn()) return;
   if (S.shape === "full") { toast("Whole frame: nothing to click – just press Save &amp; next."); return; }
   if ((S.shape === "rectangle" || S.shape === "square") && S.pts.length >= 2) {
     const two = S.pts.slice(-2);
@@ -230,8 +241,9 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") { hidePopover(); return; }
   if (S.cur < 0) return;
+  if (!$("#home").classList.contains("hidden")) return;
   if (e.key === "Enter") { e.preventDefault(); saveAndNext(); }
-  else if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); undo(); }
+  else if ((e.key === "Backspace" || e.key === "Delete") && cropOn()) { e.preventDefault(); undo(); }
   else if (e.key === "ArrowRight" && S.info?.kind === "video") { e.preventDefault(); stepFrame(1); }
   else if (e.key === "ArrowLeft" && S.info?.kind === "video") { e.preventDefault(); stepFrame(-1); }
   else if (e.key.toLowerCase() === "f") fitView();
@@ -273,7 +285,7 @@ async function openFolder(path) {
     fillRecent(d.recent);
     $("#emptyMsg").classList.add("hidden");
     renderFiles(); renderRunSummary();
-    const first = S.files.findIndex((f) => !f.roi);
+    const first = cropOn() ? S.files.findIndex((f) => !f.roi) : 0;
     if (S.files.length) openFile(first >= 0 ? first : 0);
     else { $("#emptyMsg").classList.remove("hidden"); $("#emptyMsg p").innerHTML = "<b>No videos or images</b> in this folder."; }
   } catch (e) { toast(e.message, true); }
@@ -308,8 +320,8 @@ function renderFiles() {
       <input type="checkbox" ${S.checked.has(f.name) ? "checked" : ""} title="Include in processing">
       <span>${f.kind === "video" ? "🎞" : "🖼"}</span>
       <span class="fname" title="${esc(f.name)}">${esc(f.name)}</span>
-      <span class="badges">${f.roi ? `<span class="badge roi">${f.roi.shape === "full" ? "whole" : "ROI"}</span>` : ""}${f.done ? '<span class="badge done">done</span>' : ""}</span>
-      <span class="fsub">${fmtBytes(f.bytes)}${f.roi ? " · " + f.roi.shape : ""}</span>
+      <span class="badges">${f.roi && cropOn() ? `<span class="badge roi">${f.roi.shape === "full" ? "whole" : "area"}</span>` : ""}${f.done ? '<span class="badge done">done</span>' : ""}</span>
+      <span class="fsub">${fmtBytes(f.bytes)}${f.roi && cropOn() ? " · " + f.roi.shape : ""}</span>
     </li>`).join("");
   $$("#fileList li").forEach((li) => {
     const i = +li.dataset.i;
@@ -321,7 +333,7 @@ function renderFiles() {
     li.addEventListener("click", () => openFile(i));
   });
   const nroi = S.files.filter((f) => f.roi).length;
-  $("#fileSummary").textContent = S.folder ? `${S.files.length} files · ${nroi} with ROI` : "No folder open";
+  $("#fileSummary").textContent = S.folder ? `${S.files.length} files` + (cropOn() ? ` · ${nroi} with area` : "") : "No folder open";
   $("#chkAll").checked = S.files.length > 0 && S.files.every((f) => S.checked.has(f.name));
 }
 $("#chkAll").onchange = (e) => {
@@ -331,7 +343,7 @@ $("#chkAll").onchange = (e) => {
 $("#fileFilter").onchange = (e) => { S.filter = e.target.value; renderFiles(); };
 
 async function leaveFile() {
-  if (S.cur < 0 || !S.dirty) return true;
+  if (S.cur < 0 || !S.dirty || !cropOn()) return true;
   const roi = roiFromPoints(S.shape, S.pts);
   if (!roi) return true;
   if (confirm(`Save the area you drew on "${S.files[S.cur].name}" before leaving it?`)) return await saveRoi();
@@ -476,9 +488,10 @@ async function saveRoi() {
 }
 async function saveAndNext() {
   if (S.cur < 0) return;
-  if (!(S.files[S.cur].roi && !S.dirty) && !(await saveRoi())) return;
+  if (cropOn() && !(S.files[S.cur].roi && !S.dirty) && !(await saveRoi())) return;
   if (S.cur + 1 < S.files.length) openFile(S.cur + 1);
-  else toast("✔ That was the last file. Check the settings on the right and press <b>▶ Process</b>.", false, 6000);
+  else toast(cropOn() ? "✔ That was the last file. Check the settings on the right and press <b>▶ Process</b>."
+                      : "That was the last file.", false, 6000);
 }
 $("#btnSaveNext").onclick = saveAndNext;
 $("#btnPrevFile").onclick = () => { if (S.cur > 0) openFile(S.cur - 1); };
@@ -507,9 +520,9 @@ $("#btnCopyGo").onclick = async () => {
 };
 
 // ============================================================================ settings
-const NUM = ["out_w", "out_h", "crf", "jpeg_quality", "parallel", "preview_n"];
-const SEL = ["scale_mode", "transparent_video_format", "image_format", "no_roi", "preset"];
-const CHK = ["uniform", "audio", "hwaccel", "overwrite"];
+const NUM = ["out_w", "out_h", "crf", "jpeg_quality", "parallel", "preview_n", "percent", "fps"];
+const SEL = ["scale_mode", "transparent_video_format", "image_format", "no_roi", "preset", "exact_fit"];
+const CHK = ["uniform", "audio", "hwaccel", "overwrite", "allow_upscale"];
 const colorToHex = (c) => { const x = document.createElement("canvas").getContext("2d"); x.fillStyle = "#000"; x.fillStyle = c; return x.fillStyle; };
 
 function fillSettings(s) {
@@ -517,16 +530,20 @@ function fillSettings(s) {
   SEL.forEach((k) => ($("#s_" + k).value = s[k]));
   CHK.forEach((k) => ($("#s_" + k).checked = !!s[k]));
   $("#s_output_dir").value = s.output_dir || "";
-  $(`input[name=size_mode][value=${s.size_mode}]`).checked = true;
-  const keep = !s.fps; $("#fpsKeep").checked = keep; $("#s_fps").disabled = keep; $("#s_fps").value = keep ? "" : s.fps;
+  $(`input[name=resize_mode][value=${s.resize_mode}]`).checked = true;
+  if (!s.fps) $("#s_fps").value = 10;
   const bg = s.background;
   const radio = bg === "black" || bg === "white" || bg === "transparent" ? bg : "custom";
   $(`input[name=bg][value=${radio}]`).checked = true;
   if (radio === "custom") $("#bgColor").value = colorToHex(bg);
   $("#transpOpts").classList.toggle("hidden", bg !== "transparent");
   $("#crfVal").textContent = s.crf; $("#jqVal").textContent = s.jpeg_quality;
-  const box = s.size_mode === "box";
-  ["#s_out_w", "#s_out_h", "#sizePreset", "#s_scale_mode"].forEach((q) => ($(q).disabled = !box));
+  const m = s.resize_mode;
+  $(".boxopts").classList.toggle("hidden", m === "percent");
+  $(".pctopts").classList.toggle("hidden", m !== "percent");
+  $(".fitopts").classList.toggle("hidden", m !== "fit");
+  $(".exactopts").classList.toggle("hidden", m !== "exact");
+  applyTasks();
 }
 function collectSettings() {
   const s = {};
@@ -534,8 +551,7 @@ function collectSettings() {
   SEL.forEach((k) => (s[k] = $("#s_" + k).value));
   CHK.forEach((k) => (s[k] = $("#s_" + k).checked));
   s.output_dir = $("#s_output_dir").value.trim();
-  s.size_mode = $("input[name=size_mode]:checked").value;
-  s.fps = $("#fpsKeep").checked ? 0 : +$("#s_fps").value || 0;
+  s.resize_mode = $("input[name=resize_mode]:checked").value;
   const bg = $("input[name=bg]:checked").value;
   s.background = bg === "custom" ? $("#bgColor").value : bg;
   return s;
@@ -555,7 +571,6 @@ $$(".settings input, .settings select").forEach((el) => {
 });
 $("#s_crf").addEventListener("input", (e) => ($("#crfVal").textContent = e.target.value));
 $("#s_jpeg_quality").addEventListener("input", (e) => ($("#jqVal").textContent = e.target.value));
-$("#fpsKeep").addEventListener("change", (e) => { if (!e.target.checked && !$("#s_fps").value) $("#s_fps").value = 10; });
 $("#sizePreset").onchange = (e) => {
   if (!e.target.value) return;
   const [w, h] = e.target.value.split("x"); $("#s_out_w").value = w; $("#s_out_h").value = h;
@@ -570,37 +585,33 @@ $("#btnReset").onclick = async () => {
   if (!confirm("Reset all settings to their defaults?")) return;
   const d = await api("/api/settings/reset", {}); S.settings = d.settings; fillSettings(S.settings); refreshFiles();
 };
-const PRESETS = {
-  dlc: [{ size_mode: "box", out_w: 720, out_h: 720, uniform: true, scale_mode: "fit", background: "black", fps: 10, crf: 20,
-          image_format: "same", no_roi: "skip", audio: false },
-        "DeepLabCut: black outside, all 720 × 720, 10 fps, MP4"],
-  slides: [{ size_mode: "box", out_w: 1920, out_h: 1080, uniform: false, scale_mode: "fit", background: "transparent",
-             transparent_video_format: "mov", fps: 0, image_format: "png", audio: false },
-           "Presentation: transparent outside, just the crop (max 1920 × 1080), original fps, .mov / .png"],
-  downsample: [{ size_mode: "box", out_w: 1280, out_h: 720, uniform: false, scale_mode: "fit", background: "black", fps: 0,
-                 no_roi: "full", image_format: "same" },
-               "Only downsample: whole frame for files without area, max 1280 × 720, original fps"],
-};
-$$("[data-preset]").forEach((b) => (b.onclick = async () => {
-  const [p, msg] = PRESETS[b.dataset.preset]; await saveSettings(p); toast("✔ " + msg, false, 5000);
-}));
-
+function describeTasks(s) {
+  const t = s.tasks, parts = [];          // in the order they are applied
+  if (t.fps) parts.push(`${s.fps} fps`);
+  if (t.crop) parts.push("crop");
+  if (t.resize) parts.push(s.resize_mode === "percent" ? `resize ${s.percent}%` :
+    s.resize_mode === "exact" ? `exact ${s.out_w}×${s.out_h} (${s.exact_fit})` : `fit in ${s.out_w}×${s.out_h}`);
+  return parts;
+}
 function renderRunSummary() {
   const s = S.settings; if (!s) return;
   $("#outDirResolved").textContent = S.folder ? "→ " + (S.outputDir || "") : "";
   if (!S.folder) { $("#runSummary").textContent = "Open a folder first."; $("#btnProcess").disabled = true; return; }
+  const t = s.tasks;
   const sel = S.files.filter((f) => S.checked.has(f.name));
   const withRoi = sel.filter((f) => f.roi), without = sel.length - withRoi.length;
-  const n = s.no_roi === "full" ? sel.length : withRoi.length;
-  const nv = (s.no_roi === "full" ? sel : withRoi).filter((f) => f.kind === "video").length;
-  const size = s.size_mode === "original" ? "original resolution" : `fit in ${s.out_w}×${s.out_h}`;
-  const bg = s.background === "transparent" ? `transparent (${s.transparent_video_format} / png)` : s.background;
-  let txt = `<b>${n}</b> file${n === 1 ? "" : "s"} (${nv} video, ${n - nv} image) · ${size}` +
-    `${s.uniform ? ", all same size" : ", just the crop"} · ${nv ? (s.fps ? s.fps + " fps · " : "original fps · ") : ""}background ${esc(bg)}`;
-  if (without && s.no_roi === "skip") txt += `<br><span class="muted">${without} ticked file(s) without area will be skipped.</span>`;
+  const use = !t.crop || s.no_roi === "full" ? sel : withRoi;
+  const n = use.length, nv = use.filter((f) => f.kind === "video").length;
+  const bg = s.background === "transparent" ? "transparent" : s.background;
+  const parts = describeTasks(s);
+  const framed = (t.resize && s.resize_mode === "exact") || s.uniform;
+  let txt = `<b>${n}</b> file${n === 1 ? "" : "s"} (${nv} video, ${n - nv} image) · ${esc(parts.join(" → ") || "nothing selected")}` +
+    (framed ? " · all same size" : "") + (t.crop || framed ? ` · background ${esc(bg)}` : "");
+  if (t.fps && !nv) txt += `<br><span class="muted">Frame rate only changes videos.</span>`;
+  if (t.crop && without && s.no_roi === "skip") txt += `<br><span class="muted">${without} ticked file(s) without area will be skipped.</span>`;
   $("#runSummary").innerHTML = txt;
   $("#btnProcess").textContent = `▶ Process ${n} file${n === 1 ? "" : "s"}`;
-  $("#btnProcess").disabled = n === 0;
+  $("#btnProcess").disabled = n === 0 || !parts.length;
 }
 
 // ============================================================================ processing
@@ -703,6 +714,85 @@ $("#btnQuit").onclick = async () => {
   if (!confirm("Stop CropKit? (Running jobs are cancelled.)")) return;
   try { await api("/api/quit", {}); } catch (_) { /* server already gone */ }
   document.body.innerHTML = '<div style="padding:60px;text-align:center;font-family:sans-serif"><h2>CropKit stopped.</h2><p>You can close this window. Start it again with start.command (Mac) or start.bat (Windows).</p></div>';
+};
+
+// ============================================================================ home & tasks
+function renderChips() {
+  const t = T(), names = { crop: "Crop", resize: "Resize", fps: "Frame rate" };
+  $("#taskChips").innerHTML = Object.keys(names).filter((k) => t[k]).map((k) => `<span class="chip">${names[k]}</span>`).join("") ||
+    '<span class="chip off">nothing</span>';
+}
+function applyTasks() {
+  const t = T(), s = S.settings;
+  document.body.classList.toggle("nocrop", !t.crop);
+  $("#fsResize").classList.toggle("hidden", !t.resize);
+  $("#fsFps").classList.toggle("hidden", !t.fps);
+  $("#fsNoRoi").classList.toggle("hidden", !t.crop);
+  const exact = t.resize && s.resize_mode === "exact";
+  $("#fsLayout").classList.toggle("hidden", exact);
+  $("#fsBackground").classList.toggle("hidden", !(t.crop || exact || s.uniform));
+  $("#uniformNote").textContent = s.uniform
+    ? (t.resize && s.resize_mode === "fit" ? `Every output is ${s.out_w} × ${s.out_h}.` : "Every output gets the size of the biggest one.")
+    : "Each output is only as big as its picture.";
+  $("#editorTitle").textContent = t.crop ? "2 · Draw the area to keep" : "2 · Preview";
+  $("#drawInfo").dataset.help = t.crop ? "draw" : "preview";
+  $("#btnSaveNext").innerHTML = t.crop ? "✔ Save &amp; next ▶" : "Next ▶";
+  $("#settingsSub").textContent = "Order: " + ["fps", "crop", "resize"].filter((k) => t[k])
+    .map((k) => ({ fps: "drop frames", crop: "crop", resize: "resize" }[k])).concat(["save"]).join(" → ");
+  renderChips(); renderFiles(); renderRunSummary(); draw();
+}
+function renderHome() {
+  const t = T();
+  ["crop", "resize", "fps"].forEach((k) => {
+    $("#t_" + k).checked = !!t[k];
+    $(`.taskcard[data-task=${k}]`).classList.toggle("on", !!t[k]);
+  });
+  $$(".ostep[data-o]").forEach((e) => e.classList.toggle("on", e.dataset.o === "bg" ? !!(t.crop || t.resize) : !!t[e.dataset.o]));
+  $("#btnContinue").disabled = !(t.crop || t.resize || t.fps);
+  $("#btnContinue").textContent = (t.crop || t.resize || t.fps) ? "Continue →" : "Pick at least one";
+  if (S.sys && S.sys.shortcut) {
+    $("#btnMakeIcon").textContent = "Create again";
+    $("#iconText").textContent = "✔ CropKit already has its own icon on this computer. Recreate it if you moved the CropKit folder.";
+  }
+}
+function showHome() { renderHome(); $("#home").classList.remove("hidden"); }
+function hideHome() { $("#home").classList.add("hidden"); applyTasks(); resizeCanvas(); }
+["crop", "resize", "fps"].forEach((k) => $("#t_" + k).addEventListener("change", async (e) => {
+  await saveSettings({ tasks: { ...T(), [k]: e.target.checked } }); renderHome();
+}));
+$("#btnHome").onclick = $("#taskChips").onclick = showHome;
+$("#btnContinue").onclick = () => {
+  hideHome();
+  if (!S.folder && S.settings.recent_folders && S.settings.recent_folders[0]) openFolder(S.settings.recent_folders[0]);
+};
+const RECIPES = {
+  dlc: [{ tasks: { crop: true, resize: true, fps: true }, resize_mode: "fit", out_w: 720, out_h: 720, allow_upscale: false,
+          uniform: true, scale_mode: "fit", background: "black", fps: 10, crf: 20, image_format: "same", no_roi: "skip", audio: false },
+        "DeepLabCut: crop the arena, black outside, all 720 × 720, 10 fps, MP4"],
+  slides: [{ tasks: { crop: true, resize: true, fps: false }, resize_mode: "fit", out_w: 1920, out_h: 1080, allow_upscale: false,
+             uniform: false, background: "transparent", transparent_video_format: "mov", image_format: "png", audio: false },
+           "Clip for slides: crop, transparent outside, max 1920 × 1080, original frame rate"],
+  smaller: [{ tasks: { crop: false, resize: true, fps: true }, resize_mode: "fit", out_w: 1280, out_h: 720, allow_upscale: false,
+              uniform: false, fps: 30, background: "black", image_format: "same", crf: 23 },
+            "Smaller videos: max 1280 × 720, 30 fps, no crop"],
+  fpsonly: [{ tasks: { crop: false, resize: false, fps: true }, fps: 10, uniform: false, background: "black" },
+            "Only frame rate: 10 fps, picture unchanged"],
+  half: [{ tasks: { crop: false, resize: true, fps: false }, resize_mode: "percent", percent: 50, uniform: false,
+           background: "black", image_format: "same" },
+         "Half size: every image and video at 50 %"],
+};
+$$("[data-recipe]").forEach((b) => (b.onclick = async () => {
+  const [p, msg] = RECIPES[b.dataset.recipe];
+  await saveSettings(p); renderHome(); toast("✔ " + msg + " – press Continue.", false, 5000);
+}));
+$("#btnMakeIcon").onclick = async () => {
+  $("#btnMakeIcon").disabled = true;
+  try {
+    const d = await api("/api/shortcut", { desktop: true });
+    S.sys.shortcut = true; renderHome();
+    toast("✔ App icon created. " + esc(d.hint), false, 12000);
+  } catch (e) { toast(e.message, true, 8000); }
+  $("#btnMakeIcon").disabled = false;
 };
 
 // ============================================================================ updates
@@ -818,8 +908,9 @@ function showJustUpdated() {
   $("#btnVersion").textContent = "v" + S.sys.version;
   showJustUpdated();
   checkUpdates();
+  applyTasks();
+  showHome();
   if (!S.sys.ffmpeg) toast("ffmpeg was not found: images work, videos won't. See Help → Troubleshooting.", true, 10000);
   const j = await api("/api/jobs").catch(() => null);
   if (j && j.jobs.length) { renderJobs(j.jobs, j.busy); if (j.busy) startPolling(); }
-  if (S.settings.recent_folders && S.settings.recent_folders[0]) openFolder(S.settings.recent_folders[0]);
 })();

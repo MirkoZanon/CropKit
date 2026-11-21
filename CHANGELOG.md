@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0
+- **Home screen**: choose what to do – **Crop**, **Resize**, **Frame rate**, or any combination – or start from a recipe
+  (DeepLabCut, Clip for slides, Smaller videos, Only frame rate, Half size). Only the steps and settings you need are shown.
+- **Resize** is now a task of its own: fit inside a box (optionally enlarging), exact size (add borders / fill the frame /
+  stretch) or a percentage. Works without cropping too.
+- Everything is done in one pass in the best order: drop frames → crop → resize → background / border → save.
+- **App icon**: Home → *Create app icon* makes CropKit a normal app (Applications / Dock on Mac, Desktop / Start menu on
+  Windows) that starts without the Terminal window. Existing icons are refreshed after updates.
+- New CropKit icon.
+
 ## 1.1.0
 - **Updates from inside the app**: a yellow **⬆ Update** button appears when a new version is on GitHub;
   one click installs it (a backup of the old version is kept in `~/.cropkit/backups`) and restarts CropKit.

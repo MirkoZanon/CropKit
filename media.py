@@ -269,30 +269,80 @@ def save_rois(folder, rois: dict):
 
 
 # ============================================================================ sizes & masks
-def plan_sizes(rois: dict, names, out_w, out_h, size_mode="box", scale_mode="fit"):
-    """Size (w, h) of each file's ROI in the output.
-    size_mode "box": scaled to fit in out_w x out_h ("fit": each as big as possible; "same_scale": one
-    common factor). size_mode "original": no resizing."""
-    boxes = {n: crop_box(rois[n])[2:] for n in names}
+def _even_floor(x) -> int:
+    return max(2, int(x) // 2 * 2)
+
+
+def _even_ceil(x) -> int:
+    n = int(math.ceil(x - 1e-9))
+    return max(2, n + n % 2)
+
+
+def plan_outputs(rois: dict, names, opts: dict) -> dict:
+    """How each file is resized and framed. Returns {name: {"size": (w, h), "post": (w, h) | None,
+    "canvas": (w, h) | None}}:
+      size   – the crop is scaled to this size (the mask is drawn at this size)
+      post   – then the centre is cut to this size ("exact size: fill")
+      canvas – then it is centred on a frame of this size, the rest = background
+
+    opts: resize (bool), resize_mode "fit" | "exact" | "percent", out_w, out_h, percent,
+          exact_fit "pad" | "fill" | "stretch", allow_upscale (bool), scale_mode "fit" | "same_scale",
+          uniform (bool: all outputs the same frame size)."""
+    boxes = {n: tuple(crop_box(rois[n])[2:]) for n in names}
     if not boxes:
         return {}
-    if size_mode == "original":
-        return {n: (w, h) for n, (w, h) in boxes.items()}
-    fit = {n: min(out_w / w, out_h / h) for n, (w, h) in boxes.items()}
-    if scale_mode == "same_scale":
-        kk = min(fit.values())
-        k = {n: kk for n in names}
+    OW, OH = int(opts.get("out_w", 720)), int(opts.get("out_h", 720))
+    OW, OH = OW - OW % 2, OH - OH % 2
+    mode = opts.get("resize_mode", "fit") if opts.get("resize", True) else "none"
+    plan = {}
+    if mode == "none":
+        for n, (w, h) in boxes.items():
+            plan[n] = dict(size=(w, h), post=None)
+    elif mode == "percent":
+        k = max(float(opts.get("percent", 50)), 1) / 100
+        for n, (w, h) in boxes.items():
+            plan[n] = dict(size=(_even_floor(w * k), _even_floor(h * k)), post=None)
+    elif mode == "exact":
+        how = opts.get("exact_fit", "pad")
+        for n, (w, h) in boxes.items():
+            if how == "stretch":
+                plan[n] = dict(size=(OW, OH), post=None)
+            elif how == "fill":
+                k = max(OW / w, OH / h)
+                plan[n] = dict(size=(max(_even_ceil(w * k), OW), max(_even_ceil(h * k), OH)), post=(OW, OH))
+            else:
+                k = min(OW / w, OH / h)
+                plan[n] = dict(size=(min(_even_floor(w * k), OW), min(_even_floor(h * k), OH)), post=None)
+    else:  # fit inside OW x OH
+        fit = {n: min(OW / w, OH / h) for n, (w, h) in boxes.items()}
+        if not opts.get("allow_upscale", False):
+            fit = {n: min(k, 1.0) for n, k in fit.items()}
+        if opts.get("scale_mode") == "same_scale":
+            kk = min(fit.values())
+            fit = {n: kk for n in names}
+        for n, (w, h) in boxes.items():
+            plan[n] = dict(size=(min(_even_floor(w * fit[n] + 1e-6), OW), min(_even_floor(h * fit[n] + 1e-6), OH)), post=None)
+    # frame size
+    if mode == "exact":
+        canvas = (OW, OH)
+    elif opts.get("uniform"):
+        if mode == "fit":
+            canvas = (OW, OH)
+        else:
+            canvas = (max(p["size"][0] for p in plan.values()), max(p["size"][1] for p in plan.values()))
     else:
-        k = fit
-    return {n: (max(2, min(even(w * k[n] - 1), out_w)), max(2, min(even(h * k[n] - 1), out_h)))
-            for n, (w, h) in boxes.items()}
+        canvas = None
+    for p in plan.values():
+        final = p["post"] or p["size"]
+        p["canvas"] = canvas if canvas and tuple(canvas) != tuple(final) else None
+    return plan
 
 
-def uniform_canvas(sizes: dict, out_w, out_h, size_mode="box"):
-    """Common output frame size when all outputs must have the same dimensions."""
-    if size_mode == "original":
-        return (max(w for w, _ in sizes.values()), max(h for _, h in sizes.values())) if sizes else None
-    return (out_w, out_h)
+def plan_sizes(rois: dict, names, out_w, out_h, size_mode="box", scale_mode="fit"):
+    """Older API (kept for scripts): size of each ROI fitted into out_w x out_h, or original size."""
+    plan = plan_outputs(rois, names, dict(resize=size_mode != "original", resize_mode="fit", out_w=out_w,
+                                          out_h=out_h, scale_mode=scale_mode, allow_upscale=True))
+    return {n: p["size"] for n, p in plan.items()}
 
 
 def parse_color(c: str):
@@ -341,8 +391,8 @@ def output_ext(kind, src, settings) -> str:
 
 
 # ============================================================================ images
-def process_image(src, dst, roi, size, canvas, background="black", quality=92):
-    """Crop + mask + resize one image with Pillow."""
+def process_image(src, dst, roi, size, canvas, background="black", quality=92, post=None):
+    """Crop + mask + resize one image with Pillow (post: centre cut after resizing)."""
     im = ImageOps.exif_transpose(Image.open(src)).convert("RGBA")
     x0, y0, w, h = crop_box(roi)
     crop = im.crop((x0, y0, x0 + w, y0 + h))           # beyond the image -> transparent
@@ -352,13 +402,18 @@ def process_image(src, dst, roi, size, canvas, background="black", quality=92):
     if mask is not None:
         alpha = ImageChops.darker(alpha, mask)
     crop.putalpha(alpha)
+    if post:
+        pw, ph = post
+        l, t = (crop.width - pw) // 2, (crop.height - ph) // 2
+        crop = crop.crop((l, t, l + pw, t + ph))
+    final = tuple(post) if post else tuple(size)
     transparent = background == "transparent"
-    cw, ch = canvas if canvas else size
+    cw, ch = canvas if canvas else final
     if transparent:
         out = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
     else:
         out = Image.new("RGBA", (cw, ch), parse_color(background) + (255,))
-    out.alpha_composite(crop, ((cw - size[0]) // 2, (ch - size[1]) // 2))
+    out.alpha_composite(crop, ((cw - final[0]) // 2, (ch - final[1]) // 2))
     ext = Path(dst).suffix.lower()
     tmp = Path(dst).with_name(Path(dst).stem + ".partial" + ext)
     if ext in (".jpg", ".bmp") or not transparent:
@@ -394,8 +449,10 @@ def decode_modes(hwaccel):
 _BEST_MODE: dict = {}
 
 
-def build_filter(roi, size, canvas, fps, masked, background, after_fps=None, pix_fmt=None):
-    """ffmpeg graph: fps -> [hw download] -> (pad if ROI leaves frame) -> crop -> scale -> [mask] -> [centre pad]."""
+def build_filter(roi, size, canvas, fps, masked, background, after_fps=None, pix_fmt=None, post=None):
+    """ffmpeg graph: fps -> [hw download] -> (pad if ROI leaves frame) -> crop -> scale -> [mask] -> [centre cut]
+    -> [centre pad]. This order is the fastest: frames are dropped first, everything else works on fewer,
+    smaller pictures."""
     W, H = roi["W"], roi["H"]
     x0, y0, w, h = crop_box(roi)
     sw, sh = size
@@ -418,9 +475,13 @@ def build_filter(roi, size, canvas, fps, masked, background, after_fps=None, pix
     chain += [f"scale={sw}:{sh}:flags=area", "setsar=1", "format=yuv444p" if transparent else "format=yuv420p"]
     fmt = "yuva444p" if transparent else "yuv420p"
     tail = []
-    if canvas and tuple(canvas) != (sw, sh):
+    fw, fh = (sw, sh)
+    if post and tuple(post) != (sw, sh):
+        fw, fh = post
+        tail.append(f"crop={fw}:{fh}:{(sw - fw) // 2}:{(sh - fh) // 2}")
+    if canvas and tuple(canvas) != (fw, fh):
         cw, ch = canvas
-        tail.append(f"pad={cw}:{ch}:{(cw - sw) // 2}:{(ch - sh) // 2}:{'black@0' if transparent else hexcol}")
+        tail.append(f"pad={cw}:{ch}:{(cw - fw) // 2}:{(ch - fh) // 2}:{'black@0' if transparent else hexcol}")
     tail.append(f"format={fmt}")
     tail = ",".join(tail)
     if transparent:
@@ -461,7 +522,7 @@ def make_video_mask(roi, size, path, background):
 
 def process_video(src, dst, roi, size, canvas, fps=None, background="black", crf=20, preset="veryfast",
                   hwaccel=True, audio=False, work_dir=None, log_path=None, progress=None,
-                  cancel: threading.Event | None = None, procs: set | None = None):
+                  cancel: threading.Event | None = None, procs: set | None = None, post=None):
     """Crop + mask + downsample one video with ffmpeg.
     progress(fraction, text) is called while running. Returns (ok, decode_mode, error_text)."""
     _need_ffmpeg()
@@ -478,7 +539,7 @@ def process_video(src, dst, roi, size, canvas, fps=None, background="black", crf
     out_fps = fps if (fps and (not info["fps"] or fps < info["fps"])) else None
 
     def run(name, in_args, after_fps):
-        graph = build_filter(roi, size, canvas, out_fps, mask is not None, background, after_fps, info["pix_fmt"])
+        graph = build_filter(roi, size, canvas, out_fps, mask is not None, background, after_fps, info["pix_fmt"], post)
         cmd = [FFMPEG, "-y", "-hide_banner", "-nostats", "-progress", "pipe:1", *in_args,
                "-i", str(src), *(["-i", str(mask)] if mask else []), "-filter_complex", graph,
                "-map", "[out]", *(["-map", "0:a:0?"] if keep_audio else []),

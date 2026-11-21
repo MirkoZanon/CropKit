@@ -4,12 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CropKit</title>
-<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/icons/icon-180.png" type="image/png">
+<link rel="apple-touch-icon" href="/static/icons/icon-180.png">
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><img src="/static/icon.svg" alt="" class="logo"><span>CropKit</span></div>
+  <button class="brand" id="btnHome" title="Home: choose what to do"><img src="/static/icons/icon-180.png" alt="" class="logo"><span>CropKit</span></button>
+  <button id="taskChips" class="chips" title="Change what to do (Home)"></button>
   <div class="folderbox">
     <button id="btnOpenFolder" class="primary" title="Choose the folder with your videos / images">📁 Open folder…</button>
     <div class="pathwrap">
@@ -24,6 +26,61 @@
     <button id="btnQuit" class="ghost" title="Stop CropKit">⏻ Quit</button>
   </div>
 </header>
+
+<section id="home" class="home hidden">
+  <div class="homebox">
+    <h1>What do you want to do?</h1>
+    <p class="muted">Pick one or more. CropKit does them together, in one go, in the best order.</p>
+    <div class="taskcards">
+      <label class="taskcard" data-task="crop">
+        <input type="checkbox" id="t_crop">
+        <div class="ticon">✂️</div>
+        <div><b>Crop</b><span class="info" data-help="task_crop">i</span>
+          <p>Keep only an area – circle, rectangle, square or any shape. The rest becomes black, a colour or transparent.</p></div>
+      </label>
+      <label class="taskcard" data-task="resize">
+        <input type="checkbox" id="t_resize">
+        <div class="ticon">⤡</div>
+        <div><b>Resize</b><span class="info" data-help="task_resize">i</span>
+          <p>Make pictures smaller (downsample) or bigger: fit in a box, an exact size, or a percentage.</p></div>
+      </label>
+      <label class="taskcard" data-task="fps">
+        <input type="checkbox" id="t_fps">
+        <div class="ticon">⏱</div>
+        <div><b>Frame rate</b><span class="info" data-help="task_fps">i</span>
+          <p>Videos only: keep fewer frames per second (e.g. 60 → 10 fps). Smaller files, faster analysis.</p></div>
+      </label>
+    </div>
+
+    <div class="order">
+      <span class="small muted">Order used <span class="info" data-help="order">i</span></span>
+      <span class="ostep" data-o="fps">① drop frames</span><span class="oarrow">→</span>
+      <span class="ostep" data-o="crop">② crop</span><span class="oarrow">→</span>
+      <span class="ostep" data-o="resize">③ resize</span><span class="oarrow">→</span>
+      <span class="ostep" data-o="bg">④ background / border</span><span class="oarrow">→</span>
+      <span class="ostep on">⑤ save</span>
+    </div>
+
+    <div class="recipes">
+      <span class="small muted">…or start from a recipe:</span>
+      <button data-recipe="dlc"><b>🐭 DeepLabCut</b><small>crop arena · 720×720 · 10 fps</small></button>
+      <button data-recipe="slides"><b>🎞 Clip for slides</b><small>crop · transparent outside</small></button>
+      <button data-recipe="smaller"><b>📉 Smaller videos</b><small>max 1280×720 · 30 fps</small></button>
+      <button data-recipe="fpsonly"><b>⏱ Only frame rate</b><small>10 fps · same picture</small></button>
+      <button data-recipe="half"><b>🖼 Half size</b><small>images &amp; videos at 50 %</small></button>
+    </div>
+
+    <p class="homego"><button id="btnContinue" class="go big">Continue →</button></p>
+
+    <div class="appicon">
+      <img src="/static/icons/icon-180.png" alt="">
+      <div><b>Use CropKit like a normal app</b>
+        <p class="small muted" id="iconText">Create a CropKit icon (Applications / Dock on Mac, Desktop / Start menu on Windows):
+          it starts CropKit without the Terminal window.</p></div>
+      <button id="btnMakeIcon">Create app icon</button>
+    </div>
+  </div>
+</section>
 
 <main class="layout">
   <!-- ============================== files -->
@@ -44,17 +101,17 @@
     </div>
     <ul id="fileList" class="filelist"></ul>
     <div class="legend small muted">
-      <span class="dot roi"></span>ROI drawn <span class="dot done"></span>output exists
+      <span class="roiOnly"><span class="dot roi"></span>area drawn</span> <span class="dot done"></span>output exists
     </div>
   </aside>
 
   <!-- ============================== editor -->
   <section class="panel editor">
     <div class="panelhead">
-      <h2>2 · Draw the area to keep <span class="info" data-help="draw">i</span></h2>
+      <h2><span id="editorTitle">2 · Draw the area to keep</span> <span class="info" data-help="draw" id="drawInfo">i</span></h2>
       <div id="fileTitle" class="small muted">Open a folder and pick a file</div>
     </div>
-    <div class="toolbar">
+    <div class="toolbar" id="cropTools">
       <div class="seg" id="shapeButtons">
         <button data-shape="circle" title="Circle: click 3+ points on the edge">◯ Circle</button>
         <button data-shape="rectangle" title="Rectangle: click 2 opposite corners">▭ Rectangle</button>
@@ -92,8 +149,8 @@
     <div class="savebar">
       <div id="status" class="status">—</div>
       <div class="spacer"></div>
-      <button id="btnRemoveRoi" class="ghost" title="Delete the saved ROI of this file">Remove ROI</button>
-      <button id="btnCopyRoi" title="Copy this file's saved ROI to the other files">⇉ Copy to other files…</button>
+      <button id="btnRemoveRoi" class="ghost roiOnly" title="Delete the saved area of this file">Remove area</button>
+      <button class="roiOnly" id="btnCopyRoi" title="Copy this file's saved ROI to the other files">⇉ Copy to other files…</button>
       <button id="btnPrevFile" title="Previous file">◀ Prev</button>
       <button id="btnSaveNext" class="primary" title="Save the ROI and open the next file (Enter)">✔ Save &amp; next ▶</button>
     </div>
@@ -102,13 +159,8 @@
   <!-- ============================== settings + run -->
   <aside class="panel settings">
     <div class="panelhead">
-      <h2>3 · Output settings <span class="info" data-help="settings">i</span></h2>
-      <div class="presets small">
-        Quick setup:
-        <button data-preset="dlc" title="Black outside, same size for all, MP4, 10 fps">DeepLabCut</button>
-        <button data-preset="slides" title="Transparent outside, just the crop">Presentation</button>
-        <button data-preset="downsample" title="No crop, half size, keep everything">Only downsample</button>
-      </div>
+      <h2><span id="settingsTitle">3 · Settings</span> <span class="info" data-help="settings">i</span></h2>
+      <div class="small muted" id="settingsSub"></div>
     </div>
     <div class="scroll">
       <fieldset>
@@ -121,36 +173,61 @@
         <div class="small muted" id="outDirResolved"></div>
       </fieldset>
 
-      <fieldset>
-        <legend>Size</legend>
-        <label class="row radio"><input type="radio" name="size_mode" value="box"> Fit into
+      <fieldset id="fsResize">
+        <legend>⤡ Resize</legend>
+        <label class="row radio"><input type="radio" name="resize_mode" value="fit"> Fit inside a box
           <span class="info" data-help="size_box">i</span></label>
-        <div class="inline sizeinputs">
-          <input type="number" id="s_out_w" min="16" step="2"> × <input type="number" id="s_out_h" min="16" step="2"> px
-          <select id="sizePreset" title="Common sizes">
-            <option value="">presets ▾</option>
-            <option value="480x480">480 × 480 (square)</option>
-            <option value="720x720">720 × 720 (square)</option>
-            <option value="1080x1080">1080 × 1080 (square)</option>
-            <option value="640x480">640 × 480 (VGA)</option>
-            <option value="1280x720">1280 × 720 (HD)</option>
-            <option value="1920x1080">1920 × 1080 (Full HD)</option>
-            <option value="3840x2160">3840 × 2160 (4K)</option>
-          </select>
+        <label class="row radio"><input type="radio" name="resize_mode" value="exact"> Exact size
+          <span class="info" data-help="size_exact">i</span></label>
+        <label class="row radio"><input type="radio" name="resize_mode" value="percent"> Scale by a percentage
+          <span class="info" data-help="size_percent">i</span></label>
+        <div class="sub boxopts">
+          <div class="inline sizeinputs">
+            <input type="number" id="s_out_w" min="16" step="2"> × <input type="number" id="s_out_h" min="16" step="2"> px
+            <select id="sizePreset" title="Common sizes">
+              <option value="">presets ▾</option>
+              <option value="480x480">480 × 480 (square)</option>
+              <option value="720x720">720 × 720 (square)</option>
+              <option value="1080x1080">1080 × 1080 (square)</option>
+              <option value="640x480">640 × 480 (VGA)</option>
+              <option value="1280x720">1280 × 720 (HD)</option>
+              <option value="1920x1080">1920 × 1080 (Full HD)</option>
+              <option value="3840x2160">3840 × 2160 (4K)</option>
+            </select>
+          </div>
+          <div class="fitopts">
+            <label class="row chk"><input type="checkbox" id="s_allow_upscale"> Also enlarge smaller pictures
+              <span class="info" data-help="allow_upscale">i</span></label>
+            <label class="row">Between files <span class="info" data-help="scale_mode">i</span></label>
+            <select id="s_scale_mode">
+              <option value="fit">each one as big as possible (recommended)</option>
+              <option value="same_scale">same zoom for every file</option>
+            </select>
+          </div>
+          <div class="exactopts">
+            <label class="row">When the proportions differ <span class="info" data-help="exact_fit">i</span></label>
+            <select id="s_exact_fit">
+              <option value="pad">add borders (nothing is lost)</option>
+              <option value="fill">fill the frame (cut the edges)</option>
+              <option value="stretch">stretch (distorts)</option>
+            </select>
+          </div>
         </div>
-        <label class="row radio"><input type="radio" name="size_mode" value="original"> Keep original resolution
-          <span class="info" data-help="size_original">i</span></label>
-        <label class="row chk"><input type="checkbox" id="s_uniform"> All outputs the same size (ROI centred)
-          <span class="info" data-help="uniform">i</span></label>
-        <label class="row">Scaling between files <span class="info" data-help="scale_mode">i</span></label>
-        <select id="s_scale_mode">
-          <option value="fit">each ROI fills the frame (recommended)</option>
-          <option value="same_scale">same zoom for every file</option>
-        </select>
+        <div class="sub pctopts inline">
+          <input type="number" id="s_percent" min="1" max="1000" step="1"> %
+          <span class="small muted">(50 = half width and height)</span>
+        </div>
       </fieldset>
 
-      <fieldset>
-        <legend>Outside the ROI</legend>
+      <fieldset id="fsLayout">
+        <legend>Frame</legend>
+        <label class="row chk"><input type="checkbox" id="s_uniform"> All outputs the same size (centred)
+          <span class="info" data-help="uniform">i</span></label>
+        <div class="small muted" id="uniformNote"></div>
+      </fieldset>
+
+      <fieldset id="fsBackground">
+        <legend>Outside the area / borders</legend>
         <label class="row">Background <span class="info" data-help="background">i</span></label>
         <div class="inline bgchoice">
           <label><input type="radio" name="bg" value="black"> <span class="sw" style="background:#000"></span>black</label>
@@ -167,13 +244,17 @@
         </div>
       </fieldset>
 
+      <fieldset id="fsFps">
+        <legend>⏱ Frame rate</legend>
+        <label class="row">Frames per second (videos) <span class="info" data-help="fps">i</span></label>
+        <div class="inline">
+          <input type="number" id="s_fps" min="1" max="240" step="1"> fps
+          <span class="small muted">frames above this are dropped</span>
+        </div>
+      </fieldset>
+
       <fieldset>
         <legend>Videos</legend>
-        <label class="row">Frame rate <span class="info" data-help="fps">i</span></label>
-        <div class="inline">
-          <input type="number" id="s_fps" min="0" max="240" step="1"> fps
-          <label class="chk"><input type="checkbox" id="fpsKeep"> keep original</label>
-        </div>
         <label class="row">Quality <span id="crfVal" class="mono small"></span> <span class="info" data-help="crf">i</span></label>
         <input type="range" id="s_crf" min="14" max="32" step="1">
         <div class="rangelabels small muted"><span>best / big files</span><span>small files</span></div>
@@ -194,11 +275,11 @@
         <input type="range" id="s_jpeg_quality" min="50" max="100" step="1">
       </fieldset>
 
-      <fieldset>
-        <legend>Files without ROI</legend>
+      <fieldset id="fsNoRoi">
+        <legend>Files without area</legend>
         <select id="s_no_roi">
           <option value="skip">skip them</option>
-          <option value="full">process the whole frame (only downsample)</option>
+          <option value="full">process the whole frame (no crop)</option>
         </select>
         <span class="info" data-help="no_roi">i</span>
       </fieldset>
