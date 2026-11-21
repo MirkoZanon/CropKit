@@ -302,3 +302,7 @@ label.row { display: flex; align-items: center; gap: 7px; margin: 8px 0; }
 .areamode { display: flex; align-items: center; gap: 8px; padding: 0 14px 10px; flex-wrap: wrap; }
 .areamode .seg label span { padding: 5px 12px; }
 .areamode .seg label span { white-space: nowrap; }
+
+/* the bottom "Next" when the drawing step is complete */
+#btnNext.ready { animation: readyPulse 1.6s ease-in-out 3; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); }
+@keyframes readyPulse { 50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--accent) 12%, transparent); } }

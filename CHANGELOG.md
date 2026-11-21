@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.1
+- *Draw areas*: the button under the picture always shows the one useful action – disabled until the area is complete,
+  **Save area · next file** when there is something to save, **Next file without area** when this file is done, and it
+  disappears when every file has its area. Only then does **Next: Settings ▶** appear (highlighted). Enter does the same.
+
 ## 1.7.0
 - **Same area for all files** (top of the *Draw areas* step): when the camera didn't move, draw the area once and every
   selected file of the same pixel size gets it. Changing it later updates all of them. Files of another size are listed and

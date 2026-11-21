@@ -265,6 +265,7 @@ function updateStepHint() {
 }
 function updateStatus(roi = roiFromPoints(S.shape, S.pts)) {
   explain();
+  if (S.step === "draw") updateSaveBtn();
   const f = S.files[S.cur];
   if (!f) { $("#hud").textContent = ""; $("#status").innerHTML = "—"; return; }
   if (!cropOn()) {
@@ -510,6 +511,11 @@ function updateNav() {
   $("#btnNext").classList.toggle("hidden", !next);
   const prob = stepProblem(S.step);
   $("#btnNext").disabled = !!prob;
+  // drawing areas: the bottom "Next" only appears (highlighted) once every file has its area
+  const drawStep = S.step === "draw";
+  if (drawStep && prob) $("#btnNext").classList.add("hidden");
+  $("#btnNext").classList.toggle("ready", drawStep && !prob);
+  if (drawStep) updateSaveBtn();
   if (next) $("#btnNext").textContent = `Next: ${STEP_NAME[next]} ▶`;
   let note = prob;
   if (S.step === "draw" && prob) {
@@ -711,7 +717,7 @@ async function applySameArea(fromName, quiet = false) {
 function updateAreaMode() {
   const same = !!(S.settings && S.settings.same_area);
   $$("input[name=areamode]").forEach((r) => (r.checked = r.value === (same ? "same" : "each")));
-  $("#btnSaveNext").innerHTML = same ? "✔ Use for all files ▶" : "✔ Save · next file ▶";
+  updateSaveBtn();
   const sk = (S.sizeSkipped || []).filter((n) => S.checked.has(n));
   $("#areaModeNote").innerHTML = same ? (sk.length ? `${sk.length} file(s) of another size need their own area`
                                                    : "draw once – every file of the same size gets it") : "";
@@ -730,15 +736,47 @@ $$("input[name=areamode]").forEach((r) => (r.onchange = async () => {
   else await applySameArea(f.name);
 }));
 
+// The button under the picture always shows the one useful thing to do on this file:
+//   drawing not finished -> disabled · drawn, not saved -> "Save area (· next file)" · saved -> "Next file without area"
+//   · all files have an area -> hidden (the bottom "Next: Settings" takes over)
+function nextMissingIndex() {
+  let k = S.files.findIndex((g, n) => n > S.cur && S.checked.has(g.name) && !g.roi);
+  if (k < 0) k = S.files.findIndex((g, n) => n !== S.cur && S.checked.has(g.name) && !g.roi);
+  return k;
+}
+function saveBtnState() {
+  const f = S.files[S.cur];
+  if (!f || !cropOn()) return { mode: "hidden" };
+  const valid = !!roiFromPoints(S.shape, S.pts);
+  const unsaved = S.dirty && valid;
+  const othersMissing = selectedFiles().filter((g) => g.name !== f.name && !g.roi).length;
+  const same = !!S.settings.same_area;
+  if (unsaved) {
+    if (same) return { mode: "save", label: "✔ Use for all files" + (othersMissing ? " ▶" : "") };
+    return { mode: "save", label: othersMissing ? "✔ Save area · next file ▶" : "✔ Save area" };
+  }
+  if (!f.roi) return { mode: "disabled", label: S.shape === "full" ? "✔ Use the whole picture" : "Draw the area first" };
+  if (othersMissing) return { mode: "next", label: "Next file without area ▶" };
+  return { mode: "hidden" };
+}
+function updateSaveBtn() {
+  const st = saveBtnState(), b = $("#btnSaveNext");
+  b.classList.toggle("hidden", st.mode === "hidden");
+  // "Whole" needs no points: allow saving it directly
+  const full = S.shape === "full" && S.files[S.cur] && !S.files[S.cur].roi;
+  b.disabled = st.mode === "disabled" && !full;
+  if (st.label) b.innerHTML = st.label;
+}
 async function saveAndNext() {
-  if (S.cur < 0) return;
-  if (cropOn() && !(S.files[S.cur].roi && !S.dirty) && !(await saveRoi())) return;
-  // next selected file that still needs an area (in "same area" mode most already have it)
-  let nxt = S.files.findIndex((g, k) => k > S.cur && S.checked.has(g.name) && (!S.settings.same_area || !g.roi));
-  if (nxt < 0 && S.settings.same_area) nxt = S.files.findIndex((g) => S.checked.has(g.name) && !g.roi);
-  if (nxt >= 0) openFile(nxt);
-  else toast(missingAreas().length ? `${missingAreas().length} file(s) still need an area (marked ⬜️ on the left).`
-                                   : "✔ All areas drawn – press <b>Next: Settings ▶</b>.", false, 6000);
+  if (S.cur < 0 || !cropOn()) return;
+  const st = saveBtnState(), f = S.files[S.cur];
+  const full = S.shape === "full" && !f.roi;
+  if (st.mode === "hidden") { if (!stepProblem("draw")) $("#btnNext").click(); return; }
+  if (st.mode === "disabled" && !full) { toast(`${S.shape}: ${HINT[S.shape]} first.`); return; }
+  if (st.mode === "save" || full) { if (!(await saveRoi())) return; }
+  const k = nextMissingIndex();
+  if (k >= 0) openFile(k);
+  else { updateSaveBtn(); updateNav(); toast("✔ Every file has its area – press <b>Next: Settings ▶</b>.", false, 5000); }
 }
 $("#btnSaveNext").onclick = saveAndNext;
 $("#btnPrevFile").onclick = () => { if (S.cur > 0) openFile(S.cur - 1); };
