@@ -256,16 +256,11 @@ function explain() {
 }
 
 function updateStepHint() {
-  const t = T(), n = S.files.length, drawn = S.files.filter((f) => f.roi).length;
-  if (t.crop) {
-    $("#stepIcon").textContent = "✏️";
-    $("#editorTitle").textContent = n && drawn === n ? "All areas drawn – press ▶ Process" : "Draw the area to keep on each file";
-    $("#drawProgress").textContent = n ? `${drawn} of ${n} drawn` : "";
-    $("#drawProgress").classList.toggle("alldone", n > 0 && drawn === n);
-  } else {
-    $("#stepIcon").textContent = "👁";
-    $("#editorTitle").textContent = "Check your files, then press ▶ Process";
-  }
+  const sel = S.files.filter((f) => S.checked.has(f.name)), n = sel.length, drawn = sel.filter((f) => f.roi).length;
+  $("#stepIcon").textContent = "✏️";
+  $("#editorTitle").textContent = n && drawn === n ? "All areas drawn – press Next ▶" : "Draw the area to keep on each file";
+  $("#drawProgress").textContent = n ? `${drawn} of ${n} drawn` : "";
+  $("#drawProgress").classList.toggle("alldone", n > 0 && drawn === n);
 }
 function updateStatus(roi = roiFromPoints(S.shape, S.pts)) {
   explain();
@@ -360,7 +355,7 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") { hidePopover(); return; }
   if (S.cur < 0) return;
-  if (!$("#home").classList.contains("hidden")) return;
+  if (!$("#home").classList.contains("hidden") || S.step !== "draw") return;
   if (e.key === "Enter") { e.preventDefault(); saveAndNext(); }
   else if ((e.key === "Backspace" || e.key === "Delete") && cropOn()) { e.preventDefault(); undo(); }
   else if (e.key === "ArrowRight" && S.info?.kind === "video") { e.preventDefault(); stepFrame(1); }
@@ -398,15 +393,17 @@ async function openFolder(path) {
   if (!(await leaveFile())) return;
   try {
     const d = await api("/api/folder", { path });
-    S.folder = d.path; S.files = d.files; S.outputDir = d.output_dir;
+    S.folder = d.path; S.files = d.files; S.outputDir = d.output_dir; S.nextFree = d.next_free_output;
     $("#folderName").textContent = baseName(d.path); $("#folderPill").title = d.path + " – change folder (Home)";
-    hideHome();
     S.checked = new Set(S.files.map((f) => f.name));
+    S.allowMissing = false; S.step = "files"; S.lastRun = null;
+    $("#jobs").innerHTML = ""; $("#afterRun").classList.add("hidden");
+    hideHome();
     S.cur = -1; S.prevRoi = [...S.files].reverse().find((f) => f.roi)?.roi || null;
     $("#folderPath").value = d.path;
     fillRecent(d.recent);
     renderFiles(); renderRunSummary();
-    const first = cropOn() ? S.files.findIndex((f) => !f.roi) : 0;
+    const first = S.files.findIndex((f) => !f.roi);
     if (S.files.length) { $("#emptyMsg").classList.add("hidden"); openFile(first >= 0 ? first : 0); }
     else { S.img = null; draw(); $("#emptyMsg").classList.remove("hidden"); $("#emptyMsg p").innerHTML = "<b>No videos or images</b> in this folder."; }
   } catch (e) { toast(e.message, true); }
@@ -416,8 +413,8 @@ async function refreshFiles() {
   try {
     const d = await api("/api/folder", { path: S.folder });
     const byName = Object.fromEntries(d.files.map((f) => [f.name, f]));
-    S.files.forEach((f) => { if (byName[f.name]) { f.done = byName[f.name].done; f.roi = byName[f.name].roi; } });
-    S.outputDir = d.output_dir; renderFiles(); renderRunSummary();
+    S.files.forEach((f) => { const g = byName[f.name]; if (g) { f.done = g.done; f.roi = g.roi; f.done_info = g.done_info; f.output = g.output; } });
+    S.outputDir = d.output_dir; S.nextFree = d.next_free_output; renderFiles(); renderRunSummary();
   } catch (_) { /* ignore */ }
 }
 const baseName = (p) => String(p).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p;
@@ -434,39 +431,123 @@ $("#btnOpenFolder").onclick = async () => {
 };
 $("#folderPath").addEventListener("keydown", (e) => { if (e.key === "Enter") openFolder(e.target.value.trim()); });
 
+const selectedFiles = () => S.files.filter((f) => S.checked.has(f.name));
 function visibleFiles() {
-  return S.files.map((f, i) => [f, i]).filter(([f]) =>
-    S.filter === "all" || (S.filter === "roi" && f.roi) || (S.filter === "noroi" && !f.roi) || S.filter === f.kind);
+  return S.files.map((f, i) => [f, i]).filter(([f]) => S.filter === "all" || S.filter === f.kind ||
+    (S.filter === "done" && f.done) || (S.filter === "new" && !f.done));
 }
 function renderFiles() {
-  const ul = $("#fileList");
-  ul.innerHTML = visibleFiles().map(([f, i]) => `
-    <li data-i="${i}" class="${i === S.cur ? "active" : ""}">
-      <input type="checkbox" ${S.checked.has(f.name) ? "checked" : ""} title="Include in processing">
+  // step 1: which files
+  $("#fileTable").innerHTML = visibleFiles().map(([f, i]) => {
+    const on = S.checked.has(f.name);
+    return `<div class="frow ${on ? "" : "off"}" data-i="${i}">
+      <input type="checkbox" ${on ? "checked" : ""} title="Use this file">
       <span>${f.kind === "video" ? "🎞" : "🖼"}</span>
-      <span class="fname" title="${esc(f.name)}">${esc(f.name)}</span>
-      <span class="badges">${f.roi && cropOn() ? `<span class="badge roi">${f.roi.shape === "full" ? "whole" : "area"}</span>` : ""}${f.done ? '<span class="badge done">done</span>' : ""}</span>
-      <span class="fsub">${fmtBytes(f.bytes)}${f.roi && cropOn() ? " · " + f.roi.shape : ""}</span>
-    </li>`).join("");
-  $$("#fileList li").forEach((li) => {
-    const i = +li.dataset.i;
-    li.querySelector("input").addEventListener("click", (e) => {
-      e.stopPropagation();
-      e.target.checked ? S.checked.add(S.files[i].name) : S.checked.delete(S.files[i].name);
-      renderRunSummary();
-    });
-    li.addEventListener("click", () => openFile(i));
-  });
-  const nroi = S.files.filter((f) => f.roi).length;
-  $("#fileSummary").textContent = S.folder ? `${S.files.length} files` + (cropOn() ? ` · ${nroi} with area` : "") : "No folder open";
-  updateStepHint();
+      <span class="fn" title="${esc(f.name)}">${esc(f.name)}</span>
+      <span class="badges">${f.roi && cropOn() ? `<span class="badge roi">area drawn</span>` : ""}${f.done ? `<span class="badge prev" title="${esc(f.output || "")}">done before · ${esc(f.done_info || "")}</span>` : ""}</span>
+      <span class="fs">${fmtBytes(f.bytes)}</span></div>`;
+  }).join("") || '<p class="muted">No files match.</p>';
+  $$("#fileTable .frow").forEach((row) => (row.onclick = () => {
+    const f = S.files[+row.dataset.i];
+    S.checked.has(f.name) ? S.checked.delete(f.name) : S.checked.add(f.name);
+    renderFiles(); renderRunSummary();
+  }));
+  const sel = selectedFiles(), done = S.files.filter((f) => f.done);
+  $("#fileSummary").textContent = S.folder ? `${S.files.length} file${S.files.length === 1 ? "" : "s"} in “${baseName(S.folder)}” · ${sel.length} selected` : "No folder open";
   $("#chkAll").checked = S.files.length > 0 && S.files.every((f) => S.checked.has(f.name));
+  $("#doneNote").classList.toggle("hidden", !done.length);
+  $("#doneNote").innerHTML = done.length ? `<b>${done.length} of these file${done.length === 1 ? " has" : "s have"} been processed before</b>
+    (results in “${esc(baseName(S.outputDir))}”). That's fine: at the last step you choose whether to skip them,
+    process them again, or save everything in a new folder.` : "";
+  // step 2: the selected files, to draw on
+  $("#fileList").innerHTML = S.files.map((f, i) => [f, i]).filter(([f]) => S.checked.has(f.name)).map(([f, i]) => `
+    <li data-i="${i}" class="${i === S.cur ? "active" : ""}">
+      <span>${f.roi ? "✅" : "⬜️"}</span><span>${f.kind === "video" ? "🎞" : "🖼"}</span>
+      <span class="fname" title="${esc(f.name)}">${esc(f.name)}</span><span></span>
+      <span class="fsub">${f.roi ? (f.roi.shape === "full" ? "whole picture" : f.roi.shape) : "no area yet"}</span>
+    </li>`).join("");
+  $$("#fileList li").forEach((li) => (li.onclick = () => openFile(+li.dataset.i)));
+  const drawn = sel.filter((f) => f.roi).length;
+  $("#drawSummary").textContent = sel.length ? `${drawn} of ${sel.length} drawn` : "";
+  updateStepHint(); updateNav();
 }
 $("#chkAll").onchange = (e) => {
   visibleFiles().forEach(([f]) => (e.target.checked ? S.checked.add(f.name) : S.checked.delete(f.name)));
   renderFiles(); renderRunSummary();
 };
 $("#fileFilter").onchange = (e) => { S.filter = e.target.value; renderFiles(); };
+
+// ============================================================================ steps: one thing at a time
+const STEP_NAME = { files: "Files", draw: "Draw areas", settings: "Settings", process: "Review & process" };
+const stepList = () => ["files", ...(cropOn() ? ["draw"] : []), "settings", "process"];
+function missingAreas() { return cropOn() ? selectedFiles().filter((f) => !f.roi) : []; }
+function stepProblem(step) {
+  // why you can't go past this step yet ("" = fine)
+  if (step === "files" && !selectedFiles().length) return "Select at least one file.";
+  if (step === "draw") {
+    const m = missingAreas().length;
+    if (m && !S.allowMissing) return `${m} file${m === 1 ? "" : "s"} still without an area.`;
+  }
+  return "";
+}
+function reachable(step) {
+  const L = stepList();
+  for (const s of L.slice(0, L.indexOf(step))) if (stepProblem(s)) return false;
+  return true;
+}
+function renderStepper() {
+  const L = stepList(), cur = L.indexOf(S.step);
+  $("#stepper").innerHTML = L.map((k, i) => (i ? '<span class="stepline"></span>' : "") +
+    `<button class="step ${k === S.step ? "cur" : i < cur ? "ok" : ""}" data-step="${k}" ${reachable(k) ? "" : "disabled"}>
+      <span class="num">${i < cur ? "✓" : i + 1}</span>${STEP_NAME[k]}</button>`).join("");
+  $$("#stepper .step").forEach((b) => (b.onclick = () => goStep(b.dataset.step)));
+}
+function updateNav() {
+  if (!S.step) return;
+  const L = stepList(), i = L.indexOf(S.step), next = L[i + 1];
+  $("#btnBack").style.visibility = i > 0 ? "visible" : "hidden";
+  $("#btnNext").classList.toggle("hidden", !next);
+  const prob = stepProblem(S.step);
+  $("#btnNext").disabled = !!prob;
+  if (next) $("#btnNext").textContent = `Next: ${STEP_NAME[next]} ▶`;
+  let note = prob;
+  if (S.step === "draw" && prob) {
+    const keep = S.settings.no_roi === "full" ? "processed whole (no crop)" : "skipped";
+    note = `${prob} <button class="linklike" id="btnAllowMissing">continue anyway – they'll be ${keep}</button>`;
+  } else if (S.step === "draw" && missingAreas().length) {
+    note = `${missingAreas().length} file(s) without area will be ${S.settings.no_roi === "full" ? "processed whole" : "skipped"}.`;
+  } else if (S.step === "files" && !prob) note = `${selectedFiles().length} file${selectedFiles().length === 1 ? "" : "s"} selected`;
+  $("#stepNote").innerHTML = note;
+  const b = $("#btnAllowMissing");
+  if (b) b.onclick = () => { S.allowMissing = true; updateNav(); renderStepper(); };
+  renderStepper();
+}
+function goStep(step) {
+  const L = stepList();
+  if (!L.includes(step)) step = L[0];
+  if (!reachable(step)) return;
+  if (S.step === "process" && step !== "process" && !S.polling) {   // leaving the results of the last run
+    $("#jobs").innerHTML = ""; $("#afterRun").classList.add("hidden");
+  }
+  S.step = step;
+  $$(".pane").forEach((p) => p.classList.toggle("on", p.dataset.pane === step));
+  if (step === "draw") {
+    const f = S.files[S.cur];
+    if (!f || !S.checked.has(f.name)) {           // open the first selected file that still needs an area
+      const i = S.files.findIndex((g) => S.checked.has(g.name) && !g.roi);
+      const j = i >= 0 ? i : S.files.findIndex((g) => S.checked.has(g.name));
+      if (j >= 0) openFile(j);
+    }
+    requestAnimationFrame(() => { resizeCanvas(); fitView(); });
+  }
+  if (step === "process") renderReview();
+  updateNav();
+}
+$("#btnBack").onclick = () => { const L = stepList(); goStep(L[Math.max(0, L.indexOf(S.step) - 1)]); };
+$("#btnNext").onclick = async () => {
+  if (S.step === "draw" && S.dirty && roiFromPoints(S.shape, S.pts) && !(await saveRoi())) return;
+  const L = stepList(); goStep(L[L.indexOf(S.step) + 1]);
+};
 
 async function leaveFile() {
   if (S.cur < 0 || !S.dirty || !cropOn()) return true;
@@ -615,9 +696,10 @@ async function saveRoi() {
 async function saveAndNext() {
   if (S.cur < 0) return;
   if (cropOn() && !(S.files[S.cur].roi && !S.dirty) && !(await saveRoi())) return;
-  if (S.cur + 1 < S.files.length) openFile(S.cur + 1);
-  else toast(cropOn() ? "✔ That was the last file. Check the settings on the right and press <b>▶ Process</b>."
-                      : "That was the last file.", false, 6000);
+  const nxt = S.files.findIndex((g, k) => k > S.cur && S.checked.has(g.name));
+  if (nxt >= 0) openFile(nxt);
+  else toast(missingAreas().length ? `${missingAreas().length} file(s) still need an area (marked ⬜️ on the left).`
+                                   : "✔ All areas drawn – press <b>Next: Settings ▶</b>.", false, 6000);
 }
 $("#btnSaveNext").onclick = saveAndNext;
 $("#btnPrevFile").onclick = () => { if (S.cur > 0) openFile(S.cur - 1); };
@@ -648,7 +730,7 @@ $("#btnCopyGo").onclick = async () => {
 // ============================================================================ settings
 const NUM = ["out_w", "out_h", "crf", "jpeg_quality", "parallel", "preview_n", "percent", "fps"];
 const SEL = ["scale_mode", "transparent_video_format", "image_format", "no_roi", "preset", "exact_fit"];
-const CHK = ["uniform", "audio", "hwaccel", "overwrite", "allow_upscale"];
+const CHK = ["uniform", "audio", "hwaccel", "allow_upscale"];   // (redoing earlier results is chosen at the Review step)
 const colorToHex = (c) => { const x = document.createElement("canvas").getContext("2d"); x.fillStyle = "#000"; x.fillStyle = c; return x.fillStyle; };
 
 function fillSettings(s) {
@@ -728,22 +810,47 @@ function renderRunSummary() {
   const s = S.settings; if (!s) return;
   $("#outDirResolved").innerHTML = S.folder && S.outputDir
     ? `<b>${esc(baseName(S.outputDir))}</b><br><span class="muted">${esc(S.outputDir)}</span>` : "";
-  if (!S.folder) { $("#runSummary").textContent = "Open a folder first."; $("#btnProcess").disabled = true; return; }
-  const t = s.tasks;
-  const sel = S.files.filter((f) => S.checked.has(f.name));
-  const withRoi = sel.filter((f) => f.roi), without = sel.length - withRoi.length;
-  const use = !t.crop || s.no_roi === "full" ? sel : withRoi;
-  const n = use.length, nv = use.filter((f) => f.kind === "video").length;
-  const bg = s.background === "transparent" ? "transparent" : s.background;
-  const parts = describeTasks(s);
-  const framed = (t.resize && s.resize_mode === "exact") || s.uniform;
-  let txt = `<b>${n}</b> file${n === 1 ? "" : "s"} (${nv} video, ${n - nv} image) · ${esc(parts.join(" → ") || "nothing selected")}` +
-    (framed ? " · all same size" : "") + (t.crop || framed ? ` · background ${esc(bg)}` : "");
-  if (t.fps && !nv) txt += `<br><span class="muted">Frame rate only changes videos.</span>`;
-  if (t.crop && without && s.no_roi === "skip") txt += `<br><span class="muted">${without} ticked file(s) without area will be skipped.</span>`;
-  $("#runSummary").innerHTML = txt;
-  $("#btnProcess").textContent = `▶ Process ${n} file${n === 1 ? "" : "s"}`;
-  $("#btnProcess").disabled = n === 0 || !parts.length;
+  updateNav();
+  if (S.step === "process" && !S.polling) renderReview();
+}
+function planFiles() {
+  // which selected files will really be processed (crop: those with an area, unless "whole picture")
+  const s = S.settings, sel = selectedFiles();
+  return !s.tasks.crop || s.no_roi === "full" ? sel : sel.filter((f) => f.roi);
+}
+function renderReview() {
+  const s = S.settings, t = s.tasks, use = planFiles();
+  const nv = use.filter((f) => f.kind === "video").length, ni = use.length - nv;
+  const lines = [];
+  lines.push(["📁", `${use.length} file${use.length === 1 ? "" : "s"} (${nv} video${nv === 1 ? "" : "s"}, ${ni} image${ni === 1 ? "" : "s"})`,
+    `from “${esc(baseName(S.folder))}”` + (selectedFiles().length > use.length ? ` · ${selectedFiles().length - use.length} without area skipped` : "")]);
+  if (t.fps) lines.push(["⏱", `Frame rate → ${s.fps} fps`, "frames are picked (the one closest to every 1/" + s.fps + " s), never blended" + (nv ? "" : " · no videos selected, nothing to change")]);
+  if (t.crop) lines.push(["✂️", "Crop to the areas you drew", "pixels inside copied exactly · outside " + (s.background === "transparent" ? "transparent" : esc(s.background))]);
+  if (t.resize) lines.push(["⤡", s.resize_mode === "percent" ? `Resize to ${s.percent} %` : s.resize_mode === "exact" ? `Resize to exactly ${s.out_w} × ${s.out_h} px` : `Resize to fit in ${s.out_w} × ${s.out_h} px`,
+    "shrinking: area averaging · enlarging: bicubic" + (s.resize_mode === "exact" ? ` · ${({ pad: "borders added", fill: "edges cut", stretch: "stretched" })[s.exact_fit]}` : "")]);
+  const fmt = s.background === "transparent" ? (s.transparent_video_format === "mov" ? "videos .mov (ProRes)" : "videos .webm") : `videos MP4 (H.264, quality ${s.crf})`;
+  lines.push(["💾", `Save to “${esc(baseName(S.outputDir))}”`, `${fmt} · images ${s.image_format === "same" ? "same type" : s.image_format.toUpperCase()}${s.audio ? " · sound kept" : ""}`]);
+  $("#review").innerHTML = lines.map(([ic, b, sm], i) => `<div class="rline"><span class="rn">${i ? i : ic}</span><div><b>${b}</b><small>${sm}</small></div></div>`).join("");
+  // files that already have a result
+  const prev = use.filter((f) => f.done);
+  const box = $("#existingBox");
+  box.classList.toggle("hidden", !prev.length);
+  if (prev.length) {
+    const choice = S.existing || "skip";
+    box.innerHTML = `<h3>⚠️ ${prev.length} of these file${prev.length === 1 ? " was" : "s were"} already processed before</h3>
+      <ul>${prev.slice(0, 50).map((f) => `<li>${esc(f.name)} → ${esc(f.output || "")} <span class="muted">(${esc(f.done_info || "")})</span></li>`).join("")}</ul>
+      <label><input type="radio" name="existing" value="skip" ${choice === "skip" ? "checked" : ""}><span><b>Skip them</b> – ${use.length - prev.length ? `only process the ${use.length - prev.length} new file${use.length - prev.length === 1 ? "" : "s"}` : "nothing new to process"}
+        <small>The earlier results stay as they are.</small></span></label>
+      <label><input type="radio" name="existing" value="replace" ${choice === "replace" ? "checked" : ""}><span><b>Process them again</b> and replace the earlier results
+        <small>Useful if you changed an area or a setting.</small></span></label>
+      <label><input type="radio" name="existing" value="new" ${choice === "new" ? "checked" : ""}><span><b>Save everything in a new folder</b>: “${esc(baseName(S.nextFree || ""))}”
+        <small>Keeps the earlier results and makes a complete new set next to them.</small></span></label>`;
+    $$("input[name=existing]").forEach((r) => (r.onchange = () => { S.existing = r.value; renderReview(); }));
+  }
+  const n = prev.length && (S.existing || "skip") === "skip" ? use.length - prev.length : use.length;
+  $("#btnProcess").textContent = n ? `▶ Process ${n} file${n === 1 ? "" : "s"}` : "Nothing new to process";
+  $("#btnProcess").disabled = !n || !!S.polling;
+  $("#runSummary").textContent = !n && use.length ? "All selected files were done before – choose “Process them again” or “new folder” above." : "";
 }
 
 // ============================================================================ processing
@@ -751,15 +858,17 @@ $("#btnProcess").onclick = async () => {
   if (S.dirty && roiFromPoints(S.shape, S.pts) && confirm("Save the area you are drawing first?")) await saveRoi();
   try {
     const names = S.files.filter((f) => S.checked.has(f.name)).map((f) => f.name);
-    const d = await api("/api/process", { folder: S.folder, names });
+    const d = await api("/api/process", { folder: S.folder, names, existing: S.existing || "skip" });
+    S.lastRun = d.batch; $("#afterRun").classList.add("hidden");
     renderJobs(d.jobs, true);
     startPolling();
   } catch (e) { toast(e.message, true, 6000); }
 };
 $("#btnCancel").onclick = async () => { await api("/api/cancel", {}); toast("Cancelling…"); };
 $("#btnRevealOut").onclick = async () => {
-  if (!S.outputDir) return toast("Open a folder first.");
-  api("/api/reveal", { path: S.outputDir }).catch((e) => toast(e.message, true));
+  const dir = (S.lastRun && S.lastRun.output_dir) || S.outputDir;
+  if (!dir) return toast("Open a folder first.");
+  api("/api/reveal", { path: dir }).catch((e) => toast(e.message, true));
 };
 
 function renderJobs(jobs, busy) {
@@ -790,7 +899,16 @@ function startPolling() {
         toast(`Finished${took}: ${c("done")} done` + (c("skipped") ? `, ${c("skipped")} skipped` : "") +
               (c("failed") ? `, <b>${c("failed")} failed</b>` : "") + (c("cancelled") ? `, ${c("cancelled")} cancelled` : ""),
               c("failed") > 0, 8000);
-        await refreshFiles(); renderRunSummary();
+        await refreshFiles();
+        const out = d.batch ? d.batch.output_dir : S.outputDir;
+        $("#afterRun").innerHTML = `<b>✔ Finished${took}</b><span>${c("done")} new result${c("done") === 1 ? "" : "s"} in “${esc(baseName(out))}”` +
+          (c("skipped") ? ` · ${c("skipped")} kept from before` : "") + (c("failed") ? ` · <b style="color:var(--danger)">${c("failed")} failed</b>` : "") + `</span>
+          <span class="spacer"></span><button class="primary" id="btnShowRes">📂 Show results</button>
+          <button id="btnAnother">Process another folder</button>`;
+        $("#afterRun").classList.remove("hidden");
+        $("#btnShowRes").onclick = () => $("#btnRevealOut").click();
+        $("#btnAnother").onclick = showHome;
+        S.existing = null; $("#btnProcess").disabled = false;
       }
     } catch (_) { /* server busy – try again */ }
   }, 700);
@@ -873,7 +991,7 @@ function applyTasks() {
     ? (t.resize && s.resize_mode === "fit" ? `Every result is ${s.out_w} × ${s.out_h}, the picture centred.` : "Every result gets the size of the biggest one.")
     : "Each result is only as big as its own picture.";
   $("#drawInfo").dataset.help = t.crop ? "draw" : "preview";
-  $("#btnSaveNext").innerHTML = t.crop ? "✔ Save &amp; next ▶" : "Next ▶";
+  $("#btnSaveNext").innerHTML = "✔ Save · next file ▶";
   $("#settingsSub").textContent = "Done in this order: " + ["fps", "crop", "resize"].filter((k) => t[k])
     .map((k) => ({ fps: "frame rate", crop: "crop", resize: "resize" }[k])).concat(["save"]).join(" → ");
   renderChips(); renderFiles(); renderRunSummary(); draw();
@@ -894,7 +1012,8 @@ function showHome() {
 function hideHome() {
   $("#home").classList.add("hidden");
   $("#folderPill").classList.toggle("hidden", !S.folder); $("#taskChips").classList.remove("hidden");
-  applyTasks(); resizeCanvas();
+  applyTasks();
+  goStep(stepList().includes(S.step) ? S.step : "files");
 }
 $$(".task[data-task]").forEach((b) => (b.onclick = async () => {
   const k = b.dataset.task;

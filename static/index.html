@@ -78,27 +78,38 @@
   </div>
 </section>
 
-<!-- ======================================================================= workspace -->
-<main class="layout" id="workspace">
-  <!-- files -->
-  <aside class="panel files">
-    <div class="panelhead">
-      <h2>Files <span class="info" data-help="files">i</span></h2>
-      <div class="small muted" id="fileSummary">No folder open</div>
-    </div>
-    <div class="fileactions">
-      <label class="chk small"><input type="checkbox" id="chkAll" checked> all</label>
-      <select id="fileFilter" title="Show">
-        <option value="all">show all</option>
-        <option value="noroi" class="roiOnly">without area</option>
-        <option value="roi" class="roiOnly">with area</option>
-        <option value="video">videos</option>
-        <option value="image">images</option>
-      </select>
-    </div>
-    <ul id="fileList" class="filelist"></ul>
-  </aside>
+<!-- ======================================================================= workspace: one step at a time -->
+<main id="workspace" class="workspace">
+  <nav class="stepper" id="stepper"></nav>
 
+  <!-- step: files -->
+  <section class="pane" data-pane="files">
+    <div class="panecard wide">
+      <div class="panetitle">
+        <div><h2>Which files?</h2>
+          <p class="muted small" id="fileSummary">No folder open</p></div>
+        <div class="spacer"></div>
+        <label class="chk small"><input type="checkbox" id="chkAll" checked> select all</label>
+        <select id="fileFilter" title="Show">
+          <option value="all">show all</option>
+          <option value="video">videos</option>
+          <option value="image">images</option>
+          <option value="done">done before</option>
+          <option value="new">not done yet</option>
+        </select>
+      </div>
+      <div id="doneNote" class="note hidden"></div>
+      <div class="filetable" id="fileTable"></div>
+    </div>
+  </section>
+
+  <!-- step: draw areas -->
+  <section class="pane draw" data-pane="draw">
+    <aside class="panel files">
+      <div class="panelhead"><h2>Files <span class="info" data-help="files">i</span></h2>
+        <div class="small muted" id="drawSummary"></div></div>
+      <ul id="fileList" class="filelist"></ul>
+    </aside>
   <!-- picture -->
   <section class="panel editor">
     <div class="stephint" id="stepHint">
@@ -144,17 +155,18 @@
       <button id="btnCopyRoi" class="linklike roiOnly" title="Give this area to the other files">Copy to other files…</button>
       <button id="btnRemoveRoi" class="linklike roiOnly danger" title="Delete the saved area of this file">Remove area</button>
       <button id="btnPrevFile" title="Previous file">◀</button>
-      <button id="btnSaveNext" class="primary" title="Save the area and open the next file (Enter)">✔ Save &amp; next ▶</button>
+      <button id="btnSaveNext" class="primary" title="Save the area and open the next file (Enter)">✔ Save · next file ▶</button>
     </div>
   </section>
 
-  <!-- output -->
-  <aside class="panel side">
-    <div class="panelhead">
-      <h2>Result <span class="info" data-help="settings">i</span></h2>
-      <div class="small muted" id="settingsSub"></div>
-    </div>
-    <div class="scroll" id="cards">
+  </section>
+
+  <!-- step: settings -->
+  <section class="pane" data-pane="settings">
+    <div class="panecard wide settingspane">
+      <div class="panetitle"><div><h2>Settings <span class="info" data-help="settings">i</span></h2>
+        <p class="muted small" id="settingsSub"></p></div></div>
+    <div class="cardgrid" id="cards">
 
       <section class="tcard" id="cardCrop">
         <h3><span class="tci">✂️</span>Crop</h3>
@@ -276,16 +288,34 @@
       </section>
     </div>
 
-    <div class="runbox">
-      <div id="runSummary" class="small"></div>
-      <div class="inline">
+    </div>
+  </section>
+
+  <!-- step: review & process -->
+  <section class="pane" data-pane="process">
+    <div class="panecard wide">
+      <div class="panetitle"><div><h2>Review &amp; process</h2>
+        <p class="muted small">Check what will happen, then press Process.</p></div></div>
+      <div id="review" class="review"></div>
+      <div id="existingBox" class="existing hidden"></div>
+      <div class="runrow">
         <button id="btnProcess" class="go big">▶ Process</button>
         <button id="btnCancel" class="danger hidden">■ Stop</button>
+        <span class="spacer"></span>
         <button id="btnRevealOut" class="ghost" title="Show the results folder">📂 Show results</button>
       </div>
+      <div id="runSummary" class="small muted"></div>
       <div id="jobs" class="jobs"></div>
+      <div id="afterRun" class="afterrun hidden"></div>
     </div>
-  </aside>
+  </section>
+
+  <footer class="stepnav">
+    <button id="btnBack" class="ghost">◀ Back</button>
+    <span class="spacer"></span>
+    <span id="stepNote" class="small muted"></span>
+    <button id="btnNext" class="primary">Next ▶</button>
+  </footer>
 </main>
 
 <div id="popover" class="popover hidden"></div>
@@ -325,8 +355,6 @@
       </section>
       <section class="sset">
         <h3>Processing</h3>
-        <label class="chk row"><input type="checkbox" id="s_overwrite"> Redo files that already have a result
-          <span class="info" data-help="overwrite">i</span></label>
         <label class="chk row"><input type="checkbox" id="s_hwaccel"> Use the video chip to read videos (faster)
           <span class="info" data-help="hwaccel">i</span></label>
         <div class="grid2">

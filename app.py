@@ -344,15 +344,53 @@ def quit_app():
 
 
 # ============================================================================ routes: folder & files
+def next_free_dir(path: Path) -> Path:
+    """cropped -> cropped_2, cropped_3 … (the first one that doesn't exist yet)."""
+    path = Path(path)
+    if not path.exists():
+        return path
+    k = 2
+    while (path.parent / f"{path.name}_{k}").exists():
+        k += 1
+    return path.parent / f"{path.name}_{k}"
+
+
+def _previous_runs(out_dir: Path) -> dict:
+    try:
+        return json.loads((out_dir / "processing_params.json").read_text()).get("files", {})
+    except Exception:
+        return {}
+
+
+def _describe_run(r: dict) -> str:
+    """'2026-11-21 10:03 · crop · 720×720 · 10 fps' from a processing_params.json entry."""
+    if not r:
+        return ""
+    t = r.get("tasks") or {}
+    parts = [r.get("processed", "")[:16]]
+    if t.get("crop", True) and (r.get("roi") or {}).get("shape") not in (None, "full"):
+        parts.append(f"crop ({r['roi']['shape']})")
+    if r.get("output_size"):
+        parts.append("×".join(str(x) for x in r["output_size"]))
+    if r.get("fps"):
+        parts.append(f"{r['fps']:g} fps")
+    return " · ".join(p for p in parts if p)
+
+
 def file_list(folder: Path):
     rois = media.load_rois(folder)
     out_dir = output_dir_for(folder, SETTINGS)
+    runs = _previous_runs(out_dir)
     files = []
     for p in media.list_media(folder):
         kind = media.media_kind(p)
         ext = media.output_ext(kind, p.name, SETTINGS)
-        files.append(dict(name=p.name, kind=kind, bytes=p.stat().st_size,
-                          roi=rois.get(p.name), done=(out_dir / (p.stem + ext)).exists()))
+        out = out_dir / (p.stem + ext)
+        done = out.exists()
+        files.append(dict(name=p.name, kind=kind, bytes=p.stat().st_size, roi=rois.get(p.name), done=done,
+                          output=out.name,
+                          done_info=(_describe_run(runs.get(p.name)) or
+                                     time.strftime("%Y-%m-%d %H:%M", time.localtime(out.stat().st_mtime))) if done else ""))
     return files, rois
 
 
@@ -365,7 +403,8 @@ def open_folder():
         rec = [str(folder)] + [r for r in SETTINGS.get("recent_folders", []) if r != str(folder)]
         SETTINGS["recent_folders"] = rec[:8]
         save_settings(SETTINGS)
-    return jsonify(path=str(folder), files=files, output_dir=str(output_dir_for(folder, SETTINGS)),
+    out_dir = output_dir_for(folder, SETTINGS)
+    return jsonify(path=str(folder), files=files, output_dir=str(out_dir), next_free_output=str(next_free_dir(out_dir)),
                    recent=SETTINGS["recent_folders"])
 
 
@@ -565,6 +604,11 @@ def process():
     if s["background"] != "transparent":
         media.parse_color(s["background"])
     out_dir = output_dir_for(folder, s)
+    # files that already have a result: "skip" them, "replace" them, or put everything in a "new" folder
+    existing = d.get("existing", "replace" if s.get("overwrite") else "skip")
+    if existing == "new":
+        out_dir = next_free_dir(out_dir)
+    s["overwrite"] = existing == "replace"
     if out_dir.resolve() == folder.resolve():
         raise ValueError("The output folder must be different from the input folder.")
     tasks = s["tasks"]
@@ -600,7 +644,7 @@ def process():
                    post=list(pl["post"]) if pl["post"] else None, canvas=list(pl["canvas"]) if pl["canvas"] else None,
                    fps=fps if kind == "video" else None, status="queued", progress=0.0, text="waiting")
         if (out_dir / output).exists() and not s["overwrite"]:
-            job.update(status="skipped", progress=1.0, text="already exists (turn on 'Overwrite' to redo)")
+            job.update(status="skipped", progress=1.0, text="done before – kept as it was")
         jobs.append(job)
     with RUN.lock:
         RUN.jobs = jobs

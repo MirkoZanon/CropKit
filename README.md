@@ -77,10 +77,11 @@ because it supports the hardware video decoder. Check in **Help → System check
 ## 3. How to use it
 
 1. **Home** – click what you want to do: **✂️ Crop**, **⤡ Resize**, **⏱ Frame rate** (any combination), or a recipe.
-2. **Choose your folder** (Open folder, or a recent folder). You land in the workspace: files on the left, the picture in
-   the middle (the line above it always says what to do next), the **Result** on the right.
-   Click the CropKit logo to go back Home.
-3. If you crop: **draw the area to keep** on each file, then **Save & next** (<kbd>Enter</kbd>):
+2. **Choose your folder** (Open folder, or a recent folder). CropKit then guides you **one step at a time**
+   (Back / Next at the bottom; click the CropKit logo to go back Home):
+   **Files** (tick the files; *done before* = already processed) → **Draw areas** (if you crop) → **Settings** →
+   **Review & process**.
+3. If you crop: **draw the area to keep** on each file, then **Save · next file** (<kbd>Enter</kbd>):
 
    | Shape | How |
    |---|---|
@@ -93,9 +94,10 @@ because it supports the hardware video decoder. Check in **Help → System check
    - For videos, the slider shows preview frames from start to end (<kbd>←</kbd> <kbd>→</kbd>); **🔍 Full resolution** loads the
      current moment at full size.
    - Camera didn't move? Draw once, then **⇉ Copy to other files**.
-4. **Result** on the right – one card per thing you chose, with its main setting; details under *More options*.
-   Technical options (speed, redoing finished files, app icon, updates) are in **⚙ Settings**.
-5. **▶ Process**. One progress bar per file (%, time left, speed). New files go to `cropped/` inside your folder
+4. **Settings** – one card per thing you chose, with its main setting and a *How it's done* note; details under
+   *More options*. Technical options (speed, app, updates) are in **⚙ Settings**.
+5. **Review & process** – what will happen, in order. Files processed before? Choose: skip them, process them again, or
+   save everything in a new folder. Then **▶ Process**. One progress bar per file (%, time left, speed). New files go to `cropped/` inside your folder
    (or the output folder you chose).
 
 The areas you draw are saved in `rois.json` next to your files, so you can stop and continue later,
@@ -125,7 +127,7 @@ keep), crop before resize (exact area, no work on pixels that are thrown away), 
 | Keep sound | Copy the audio track. |
 | Images: save as | same as original / PNG / JPEG / WebP / TIFF (transparent → PNG instead of JPEG). |
 | Files without area | (crop) skip them, or process the whole frame. |
-| ⚙ Settings | app icon, updates, hardware decoding, videos in parallel, encoding speed, preview frames, redo finished files. |
+| ⚙ Settings | app, updates, hardware decoding, videos in parallel, encoding speed, preview frames. |
 
 Settings are remembered in `~/.cropkit/settings.json`.
 

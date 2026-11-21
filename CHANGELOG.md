@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.0
+- **Step by step**: after choosing a folder CropKit guides you one step at a time – **Files → Draw areas → Settings →
+  Review & process** – with Back / Next. Each step shows only what it needs; *Process* is only at the end, and *Next* unlocks
+  when the step is complete (e.g. every file has an area – or choose *continue anyway*).
+- **Files processed before** are marked *done before* (with when and how they were made). At the review step you choose:
+  skip them, process them again (replace), or save everything in a **new folder** (`cropped_2`, …).
+- The review step lists exactly what will happen, in the order it is done.
+
 ## 1.5.0
 - **"How it's done"** notes in every Result card, live for the file you are looking at: exactly what happens to the pixels
   and frames (e.g. "about 1 of every 6 frames is kept (60 → 10 fps), never blended", "each new pixel is the average of

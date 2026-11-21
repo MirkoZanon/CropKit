@@ -15,8 +15,7 @@ window.INFO = {
     <b>⑤ save</b> – encoded once (no quality loss from saving several times).</p>`,
   preview: `<p>Crop is off, so there is nothing to draw: this is just a preview of each file (scroll to zoom, drag to move).</p>
     <p>To crop, go back <b>Home</b> (logo at the top left) and tick <b>Crop</b>.</p>`,
-  files: `<p>All videos and images in the folder.</p>
-    <p><b>Click</b> a file to see it (and draw its area). The <b>checkbox</b> decides whether it is processed.</p>
+  files: `<p>The files you selected in step 1. Click one to draw its area: ✅ = area drawn, ⬜️ = still to do.</p>
     <p><span style="color:#7ee2a5">ROI</span> = area drawn · <span style="color:#9cc0ff">done</span> = an output file already exists.</p>`,
   draw: `<p>Draw the part of the picture you want to <b>keep</b>. Everything outside it becomes the background colour (or transparent).</p>
     <p><b>Click</b> to place points · <b>drag a point</b> to move it · <b>drag the picture</b> to move around ·
@@ -70,8 +69,6 @@ window.INFO = {
   parallel: `<p>How many videos are processed at the same time. 2–3 is usually fastest; more can slow things down.</p>`,
   preset: `<p>MP4 encoding speed. Faster = slightly bigger files. <b>veryfast</b> is a good balance.</p>`,
   preview_n: `<p>How many preview frames the slider has for each video (spread from start to end). Fewer = loads faster.</p>`,
-  overwrite: `<p>Off: files that already have a result in the results folder are skipped (so you can add new videos and run
-    again). On: they are made again.</p>`,
   autostart: `<p>CropKit starts quietly when you log in (no window), so the app opens instantly when you click it.
     It uses almost no memory while waiting. Stop it any time with <b>Quit CropKit</b>.</p>`,
   update_check: `<p>CropKit asks GitHub (anonymously) about twice a day whether a newer version exists.
@@ -79,9 +76,9 @@ window.INFO = {
   update_auto: `<p>When a new version exists, it is installed by itself the next time you start CropKit
     (a backup of the old version is kept in <code>~/.cropkit/backups</code>).</p>
     <p>If your CropKit folder is a <b>git clone</b>, the start file already updates it with <code>git pull</code>.</p>`,
-  process: `<p>Makes the new files for all <b>ticked</b> files that have an area (or all ticked files if
-    "Files without ROI" is set to whole frame).</p><p>One bar per file shows progress, speed and time left.
-    You can keep drawing areas while it runs.</p>`,
+  process: `<p>The last step shows exactly what will happen, in order. If some files were processed before, you choose
+    whether to skip them, process them again, or save everything in a new folder. One bar per file shows progress, speed and
+    time left.</p>`,
 };
 
 window.HELP = [
@@ -90,15 +87,19 @@ window.HELP = [
     together – and saves them all in the same format: e.g. ready for <b>DeepLabCut</b>, smaller files to share, or clean clips
     for a <b>presentation</b>.</p>
     <ol>
-      <li><b>Home</b>: click what you want to do – <b>Crop</b>, <b>Resize</b>, <b>Frame rate</b> (one or more) – or a <b>recipe</b>.</li>
-      <li><b>Choose your folder</b> (Open folder, or one of your recent folders). You land in the workspace:
-        files on the left, the picture in the middle, the <b>Result</b> on the right.</li>
-      <li>If you crop: <b>draw the area to keep</b> on each file and press <b>Save &amp; next</b>. The line above the picture
-        always tells you what to do next. If the camera didn't move, draw once and use <b>Copy to other files</b>.</li>
-      <li>Check the <b>Result</b> cards on the right: one card per thing you chose, with its main setting.
-        Details are under <b>More options</b>.</li>
-      <li>Press <b>▶ Process</b>. Results go to <code>cropped</code> inside your folder (or the folder you chose in <b>Save to</b>).</li>
+      <li><b>Home</b>: click what you want to do – <b>Crop</b>, <b>Resize</b>, <b>Frame rate</b> (one or more) – or a <b>recipe</b>,
+        then choose your folder (Open folder, or a recent one).</li>
+      <li>CropKit then guides you <b>one step at a time</b> (steps at the top, <b>Back / Next</b> at the bottom):
+        <ol>
+          <li><b>Files</b> – tick the files to use. Files processed before are marked <i>done before</i>.</li>
+          <li><b>Draw areas</b> (only if you crop) – draw the area to keep on each file and press <b>Save · next file</b>.
+            <b>Next</b> unlocks when every file has an area (or choose <i>continue anyway</i>).</li>
+          <li><b>Settings</b> – one card per thing you chose, with a <i>How it's done</i> note. Details under <b>More options</b>.</li>
+          <li><b>Review &amp; process</b> – a summary of exactly what will happen, then <b>▶ Process</b>.</li>
+        </ol></li>
     </ol>
+    <p><b>Files done before?</b> At the review step CropKit lists them (when and how they were made) and asks: skip them, process
+    them again and replace the results, or save everything in a new folder (e.g. <code>cropped_2</code>).</p>
     <p>Click the <b>CropKit logo</b> (top left) to go back Home and change what to do or the folder.</p>
     <p class="tip">Your originals are never changed. Areas you draw are saved in <code>rois.json</code> next to your files, so you can
     stop and continue later, or process the same files again with other settings.</p>
