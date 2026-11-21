@@ -98,7 +98,8 @@ because it supports the hardware video decoder. Check in **Help → System check
 4. **Settings** – one card per thing you chose, with its main setting and a *How it's done* note; details under
    *More options*. Technical options (speed, app, updates) are in **⚙ Settings**.
 5. **Review & process** – what will happen, in order. Files processed before? Choose: skip them, process them again, or
-   save everything in a new folder. Then **▶ Process**. One progress bar per file (%, time left, speed). New files go to `cropped/` inside your folder
+   save everything in a new folder. Then **▶ Process**.
+6. **Done** – a summary of what was made, with *Show results*, *Process another folder* or *Change settings & run again*. One progress bar per file (%, time left, speed). New files go to `cropped/` inside your folder
    (or the output folder you chose).
 
 The areas you draw are saved in `rois.json` next to your files, so you can stop and continue later,

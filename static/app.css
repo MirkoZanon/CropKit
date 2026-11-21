@@ -313,3 +313,17 @@ label.row { display: flex; align-items: center; gap: 7px; margin: 8px 0; }
 /* the bottom "Next" when the drawing step is complete */
 #btnNext.ready { animation: readyPulse 1.6s ease-in-out 3; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); }
 @keyframes readyPulse { 50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--accent) 12%, transparent); } }
+
+/* step 5: done */
+.donehero { display: flex; gap: 18px; align-items: center; padding: 6px 4px 16px; border-bottom: 1px solid var(--line-soft); margin-bottom: 14px; }
+.donehero .big { width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; font-size: 32px; background: var(--accent-soft); color: var(--accent); flex: none; }
+.donehero.warn .big { background: #fff1d6; }
+.donehero h2 { font-size: 22px; margin: 0 0 4px; } .donehero p { margin: 0; color: var(--muted); }
+.doneactions { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 16px; }
+.donelist { display: flex; flex-direction: column; gap: 4px; }
+.drow { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center; padding: 8px 12px; border-radius: 10px; background: #f6f8fb; font-size: 13px; }
+.drow .dn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drow .ds { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.drow.failed { background: #fdeeee; } .drow.failed .ds { color: var(--danger); white-space: normal; }
+/* while processing: only progress + Stop */
+.running #existingBox, .running #btnProcess, .running #runSummary { display: none !important; }

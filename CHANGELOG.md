@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.0
+- New last step **5 · Done**: when processing ends, CropKit moves there by itself – a summary (new results, kept, failed
+  with the reason, time) and **Show results**, **Process another folder**, **Change settings & run again**.
+- While processing, the Review step shows only the progress and **Stop** (no Process button, no "processed before"
+  warning), so it no longer looks like something still has to be done.
+
 ## 1.7.2
 - *Settings* step: cleaner layout – one full-width row per task in the order they are applied (Frame rate → Crop →
   Resize → Save to), settings on the left and *How it's done* on the right.

@@ -100,6 +100,8 @@ window.HELP = [
             <b>Next</b> unlocks when every file has an area (or choose <i>continue anyway</i>).</li>
           <li><b>Settings</b> – one card per thing you chose, with a <i>How it's done</i> note. Details under <b>More options</b>.</li>
           <li><b>Review &amp; process</b> – a summary of exactly what will happen, then <b>▶ Process</b>.</li>
+          <li><b>Done</b> – what was made (and anything that failed), with <b>Show results</b>, <b>Process another folder</b> or
+            <b>Change settings &amp; run again</b>.</li>
         </ol></li>
     </ol>
     <p><b>Files done before?</b> At the review step CropKit lists them (when and how they were made) and asks: skip them, process

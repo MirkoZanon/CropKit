@@ -398,7 +398,7 @@ async function openFolder(path) {
     S.folder = d.path; S.files = d.files; S.outputDir = d.output_dir; S.nextFree = d.next_free_output;
     $("#folderName").textContent = baseName(d.path); $("#folderPill").title = d.path + " – change folder (Home)";
     S.checked = new Set(S.files.map((f) => f.name));
-    S.allowMissing = false; S.step = "files"; S.lastRun = null;
+    S.allowMissing = false; S.step = "files"; S.lastRun = null; S.lastResult = null;
     $("#jobs").innerHTML = ""; $("#afterRun").classList.add("hidden");
     hideHome();
     S.cur = -1; S.prevRoi = [...S.files].reverse().find((f) => f.roi)?.roi || null;
@@ -480,8 +480,8 @@ $("#chkAll").onchange = (e) => {
 $("#fileFilter").onchange = (e) => { S.filter = e.target.value; renderFiles(); };
 
 // ============================================================================ steps: one thing at a time
-const STEP_NAME = { files: "Files", draw: "Draw areas", settings: "Settings", process: "Review & process" };
-const stepList = () => ["files", ...(cropOn() ? ["draw"] : []), "settings", "process"];
+const STEP_NAME = { files: "Files", draw: "Draw areas", settings: "Settings", process: "Review & process", done: "Done" };
+const stepList = () => ["files", ...(cropOn() ? ["draw"] : []), "settings", "process", "done"];
 function missingAreas() { return cropOn() ? selectedFiles().filter((f) => !f.roi) : []; }
 function stepProblem(step) {
   // why you can't go past this step yet ("" = fine)
@@ -490,6 +490,7 @@ function stepProblem(step) {
     const m = missingAreas().length;
     if (m && !S.allowMissing) return `${m} file${m === 1 ? "" : "s"} still without an area.`;
   }
+  if (step === "process" && !S.lastResult) return "Press Process first.";   // "Done" exists only after a run
   return "";
 }
 function reachable(step) {
@@ -508,7 +509,8 @@ function updateNav() {
   if (!S.step) return;
   const L = stepList(), i = L.indexOf(S.step), next = L[i + 1];
   $("#btnBack").style.visibility = i > 0 ? "visible" : "hidden";
-  $("#btnNext").classList.toggle("hidden", !next);
+  // on Review the action is Process (the step moves on by itself); Done is the end
+  $("#btnNext").classList.toggle("hidden", !next || S.step === "process");
   const prob = stepProblem(S.step);
   $("#btnNext").disabled = !!prob;
   // drawing areas: the bottom "Next" only appears (highlighted) once every file has its area
@@ -548,6 +550,7 @@ function goStep(step) {
     requestAnimationFrame(() => { resizeCanvas(); fitView(); });
   }
   if (step === "process") renderReview();
+  if (step === "done") renderDone();
   updateNav();
 }
 $("#btnBack").onclick = () => { const L = stepList(); goStep(L[Math.max(0, L.indexOf(S.step) - 1)]); };
@@ -930,13 +933,46 @@ function renderReview() {
   $("#runSummary").textContent = !n && use.length ? "All selected files were done before – choose “Process them again” or “new folder” above." : "";
 }
 
+// ---------------------------------------------------------------- step 5: done
+function renderDone() {
+  const r = S.lastResult; if (!r) return;
+  const c = (st) => r.jobs.filter((j) => j.status === st).length;
+  const out = (r.batch && r.batch.output_dir) || S.outputDir;
+  const nd = c("done"), nf = c("failed"), ns = c("skipped"), nc = c("cancelled");
+  const title = nf || nc ? (nd ? "Finished, with problems" : "Nothing was made") : "All done";
+  const sub = [`${nd} new result${nd === 1 ? "" : "s"} in “${esc(baseName(out))}”`];
+  if (ns) sub.push(`${ns} kept from before`);
+  if (nf) sub.push(`<b style="color:var(--danger)">${nf} failed</b>`);
+  if (nc) sub.push(`${nc} stopped`);
+  if (r.took) sub.push(r.took.replace(/^ in /, "took "));
+  const label = { done: "✔ new result", skipped: "kept from before", failed: "✖ failed", cancelled: "stopped", queued: "not started" };
+  $("#doneBox").innerHTML = `
+    <div class="donehero ${nf || nc ? "warn" : ""}"><div class="big">${nf || nc ? "⚠️" : "✔"}</div>
+      <div><h2>${title}</h2><p>${sub.join(" · ")}</p>
+      <p class="small">${esc(out)}</p></div></div>
+    <div class="doneactions">
+      <button class="primary big" id="dnShow">📂 Show results</button>
+      <button class="big" id="dnAnother">Process another folder</button>
+      <button class="ghost" id="dnAgain">Change settings &amp; run again</button>
+    </div>
+    <div class="donelist">${r.jobs.map((j) => `<div class="drow ${j.status}">
+      <span>${j.kind === "video" ? "🎞" : "🖼"}</span><span class="dn">${esc(j.name)} → ${esc(j.output)}</span>
+      <span class="ds">${label[j.status] || j.status}${j.status === "failed" ? ": " + esc(j.text || "") : ""}</span></div>`).join("")}</div>
+    <p class="small muted" style="margin-top:12px">The crop, scale and methods used for each file are saved in
+      <code>processing_params.json</code> in the results folder.</p>`;
+  $("#dnShow").onclick = () => api("/api/reveal", { path: out }).catch((e) => toast(e.message, true));
+  $("#dnAnother").onclick = showHome;
+  $("#dnAgain").onclick = () => goStep("settings");
+}
+
 // ============================================================================ processing
 $("#btnProcess").onclick = async () => {
   if (S.dirty && roiFromPoints(S.shape, S.pts) && confirm("Save the area you are drawing first?")) await saveRoi();
   try {
     const names = S.files.filter((f) => S.checked.has(f.name)).map((f) => f.name);
     const d = await api("/api/process", { folder: S.folder, names, existing: S.existing || "skip" });
-    S.lastRun = d.batch; $("#afterRun").classList.add("hidden");
+    S.lastRun = d.batch; S.lastResult = null; $("#afterRun").classList.add("hidden");
+    document.body.classList.add("running");
     renderJobs(d.jobs, true);
     startPolling();
   } catch (e) { toast(e.message, true, 6000); }
@@ -973,19 +1009,12 @@ function startPolling() {
         clearInterval(S.polling); S.polling = null;
         const c = (st) => d.jobs.filter((j) => j.status === st).length;
         const took = d.batch && d.batch.finished ? ` in ${fmtTime(d.batch.finished - d.batch.started)}` : "";
-        toast(`Finished${took}: ${c("done")} done` + (c("skipped") ? `, ${c("skipped")} skipped` : "") +
-              (c("failed") ? `, <b>${c("failed")} failed</b>` : "") + (c("cancelled") ? `, ${c("cancelled")} cancelled` : ""),
-              c("failed") > 0, 8000);
+        // (the Done step shows the summary – no extra pop-up)
         await refreshFiles();
-        const out = d.batch ? d.batch.output_dir : S.outputDir;
-        $("#afterRun").innerHTML = `<b>✔ Finished${took}</b><span>${c("done")} new result${c("done") === 1 ? "" : "s"} in “${esc(baseName(out))}”` +
-          (c("skipped") ? ` · ${c("skipped")} kept from before` : "") + (c("failed") ? ` · <b style="color:var(--danger)">${c("failed")} failed</b>` : "") + `</span>
-          <span class="spacer"></span><button class="primary" id="btnShowRes">📂 Show results</button>
-          <button id="btnAnother">Process another folder</button>`;
-        $("#afterRun").classList.remove("hidden");
-        $("#btnShowRes").onclick = () => $("#btnRevealOut").click();
-        $("#btnAnother").onclick = showHome;
+        document.body.classList.remove("running");
+        S.lastResult = { jobs: d.jobs, batch: d.batch, took };
         S.existing = null; $("#btnProcess").disabled = false;
+        goStep("done");
       }
     } catch (_) { /* server busy – try again */ }
   }, 700);
