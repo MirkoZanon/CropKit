@@ -1,0 +1,721 @@
+/* CropKit – browser interface. Talks to the local Python server (app.py). */
+"use strict";
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+async function api(path, body, method) {
+  const opt = body === undefined ? { method: method || "GET" }
+    : { method: method || "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const r = await fetch(path, opt);
+  let data = {};
+  try { data = await r.json(); } catch (_) { /* empty */ }
+  if (!r.ok) throw new Error(data.error || `${r.status} ${r.statusText}`);
+  return data;
+}
+const qs = (o) => new URLSearchParams(o).toString();
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtBytes = (b) => b > 1e9 ? (b / 1e9).toFixed(2) + " GB" : b > 1e6 ? (b / 1e6).toFixed(1) + " MB" : Math.round(b / 1e3) + " kB";
+const fmtTime = (s) => { s = Math.max(0, Math.round(s)); const m = Math.floor(s / 60); return m ? `${m} min ${s % 60}s` : `${s}s`; };
+
+let toastTimer;
+function toast(msg, err = false, ms = 3500) {
+  const t = $("#toast");
+  t.innerHTML = msg; t.classList.toggle("err", err); t.classList.remove("hidden");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add("hidden"), ms);
+}
+
+// ============================================================================ state
+const S = {
+  sys: null, settings: null, folder: null, outputDir: "", files: [], checked: new Set(), filter: "all",
+  cur: -1, info: null, W: 0, H: 0, shape: "circle", pts: [], dirty: false, prevRoi: null,
+  img: null, frames: new Map(), frameIdx: 0, gen: 0, fullRes: false,
+  view: { s: 1, ox: 0, oy: 0 }, polling: null,
+};
+
+// ============================================================================ geometry (mirror of media.py)
+function fitCircle(pts) {
+  let sxx = 0, sxy = 0, sx = 0, syy = 0, sy = 0, n = pts.length, bx = 0, by = 0, b1 = 0;
+  for (const [x, y] of pts) {
+    const b = x * x + y * y;
+    sxx += x * x; sxy += x * y; sx += x; syy += y * y; sy += y; bx += x * b; by += y * b; b1 += b;
+  }
+  const M = [[sxx, sxy, sx], [sxy, syy, sy], [sx, sy, n]], v = [bx, by, b1];
+  const det = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  const D = det(M);
+  if (Math.abs(D) < 1e-9) return null;
+  const c = [0, 1, 2].map((k) => det(M.map((row, i) => row.map((val, j) => (j === k ? v[i] : val)))) / D);
+  const cx = c[0] / 2, cy = c[1] / 2, r2 = c[2] + cx * cx + cy * cy;
+  return r2 > 0 ? { cx, cy, r: Math.sqrt(r2) } : null;
+}
+
+function roiFromPoints(shape, pts) {
+  if (shape === "full") return { shape };
+  if (shape === "circle" && pts.length >= 3) { const c = fitCircle(pts); return c && { shape, ...c }; }
+  if ((shape === "rectangle" || shape === "square") && pts.length >= 2) {
+    let [[xa, ya], [xb, yb]] = pts.slice(-2);
+    if (shape === "square") {
+      const side = Math.max(Math.abs(xb - xa), Math.abs(yb - ya));
+      xb = xa + side * (xb >= xa ? 1 : -1); yb = ya + side * (yb >= ya ? 1 : -1);
+    }
+    return { shape, x0: Math.min(xa, xb), y0: Math.min(ya, yb), x1: Math.max(xa, xb), y1: Math.max(ya, yb) };
+  }
+  if (shape === "polygon" && pts.length >= 3) return { shape, pts };
+  return null;
+}
+
+function pointsFromRoi(roi) {
+  if (!roi) return [];
+  if (roi.points && roi.points.length) return roi.points.map((p) => [p[0], p[1]]);
+  if (roi.shape === "circle") return [0, 1, 2, 3].map((k) => [roi.cx + roi.r * Math.cos(k * Math.PI / 2), roi.cy + roi.r * Math.sin(k * Math.PI / 2)]);
+  if (roi.shape === "rectangle" || roi.shape === "square") return [[roi.x0, roi.y0], [roi.x1, roi.y1]];
+  if (roi.shape === "polygon") return roi.pts.map((p) => [p[0], p[1]]);
+  return [];
+}
+
+const NEED = { circle: 3, rectangle: 2, square: 2, polygon: 3, full: 0 };
+const HINT = {
+  circle: "click 3 or more points on the edge",
+  rectangle: "click 2 opposite corners",
+  square: "click 2 opposite corners",
+  polygon: "click the corners in order",
+  full: "whole frame – nothing to draw",
+};
+
+// ============================================================================ canvas
+const cv = $("#canvas"), ctx = cv.getContext("2d");
+
+function resizeCanvas() {
+  const r = $("#stage").getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  cv.width = Math.max(1, Math.round(r.width * dpr)); cv.height = Math.max(1, Math.round(r.height * dpr));
+  cv._dpr = dpr; cv._w = r.width; cv._h = r.height;
+  draw();
+}
+new ResizeObserver(() => { const had = cv._w; resizeCanvas(); if (!had) fitView(); }).observe($("#stage"));
+
+function fitView() {
+  if (!S.W) return;
+  const pad = 16, s = Math.min((cv._w - 2 * pad) / S.W, (cv._h - 2 * pad) / S.H);
+  S.view = { s, ox: (cv._w - S.W * s) / 2, oy: (cv._h - S.H * s) / 2 };
+  draw();
+}
+const toScreen = ([x, y]) => [S.view.ox + x * S.view.s, S.view.oy + y * S.view.s];
+const toImage = (sx, sy) => [(sx - S.view.ox) / S.view.s, (sy - S.view.oy) / S.view.s];
+
+function roiPath(roi, p) {
+  const v = S.view;
+  if (roi.shape === "full") { p.rect(v.ox, v.oy, S.W * v.s, S.H * v.s); return; }
+  if (roi.shape === "circle") { const [x, y] = toScreen([roi.cx, roi.cy]); p.moveTo(x + roi.r * v.s, y); p.arc(x, y, roi.r * v.s, 0, 2 * Math.PI); return; }
+  if (roi.shape === "rectangle" || roi.shape === "square") {
+    const [x0, y0] = toScreen([roi.x0, roi.y0]), [x1, y1] = toScreen([roi.x1, roi.y1]); p.rect(x0, y0, x1 - x0, y1 - y0); return;
+  }
+  roi.pts.forEach((q, i) => { const [x, y] = toScreen(q); i ? p.lineTo(x, y) : p.moveTo(x, y); }); p.closePath();
+}
+
+function draw() {
+  const dpr = cv._dpr || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cv._w, cv._h);
+  if (!S.img || !S.W) return;
+  const v = S.view;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(S.img, v.ox, v.oy, S.W * v.s, S.H * v.s);
+  const roi = roiFromPoints(S.shape, S.pts);
+  if (roi && roi.shape !== "full") {
+    const p = new Path2D(); p.rect(0, 0, cv._w, cv._h); roiPath(roi, p);
+    ctx.fillStyle = "rgba(10,12,16,0.55)"; ctx.fill(p, "evenodd");
+    const o = new Path2D(); roiPath(roi, o);
+    ctx.lineWidth = 2.2; ctx.strokeStyle = "#ff4d4d"; ctx.stroke(o);
+    if (roi.shape === "circle") {
+      const [x, y] = toScreen([roi.cx, roi.cy]);
+      ctx.beginPath(); ctx.moveTo(x - 8, y); ctx.lineTo(x + 8, y); ctx.moveTo(x, y - 8); ctx.lineTo(x, y + 8); ctx.stroke();
+    }
+  } else if (roi && roi.shape === "full") {
+    const o = new Path2D(); roiPath(roi, o); ctx.lineWidth = 3; ctx.strokeStyle = "#ff4d4d"; ctx.stroke(o);
+  }
+  if (S.shape === "polygon" && S.pts.length >= 2 && !roi) {
+    ctx.beginPath(); S.pts.forEach((q, i) => { const [x, y] = toScreen(q); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.lineWidth = 2; ctx.strokeStyle = "#ff4d4d"; ctx.stroke();
+  }
+  S.pts.forEach((q, i) => {
+    const [x, y] = toScreen(q);
+    ctx.beginPath(); ctx.arc(x, y, 5.5, 0, 2 * Math.PI);
+    ctx.fillStyle = "#ffd34d"; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = "#1a1a1a"; ctx.stroke();
+    if (S.shape === "polygon") { ctx.fillStyle = "#fff"; ctx.font = "11px sans-serif"; ctx.fillText(String(i + 1), x + 7, y - 7); }
+  });
+  updateStatus(roi);
+}
+
+function updateStatus(roi = roiFromPoints(S.shape, S.pts)) {
+  const f = S.files[S.cur];
+  if (!f) { $("#hud").textContent = ""; $("#status").innerHTML = "—"; return; }
+  const n = S.pts.length, need = NEED[S.shape];
+  let hud = `${S.shape}: ${HINT[S.shape]}`;
+  if (S.shape !== "full") hud += ` · ${n} point${n === 1 ? "" : "s"}` + (n < need ? ` (need ${need})` : "");
+  hud += "  ·  drag = move · wheel = zoom";
+  $("#hud").textContent = hud;
+  let st;
+  if (roi) {
+    let d = "";
+    if (roi.shape === "circle") {
+      const dev = Math.max(...S.pts.map(([x, y]) => Math.abs(Math.hypot(x - roi.cx, y - roi.cy) - roi.r)));
+      d = `centre (${roi.cx.toFixed(0)}, ${roi.cy.toFixed(0)}), radius <b>${roi.r.toFixed(0)} px</b>, max point deviation ${dev.toFixed(1)} px`;
+    } else if (roi.shape === "full") d = `whole frame ${S.W} × ${S.H} px`;
+    else {
+      const xs = roi.shape === "polygon" ? roi.pts.map((p) => p[0]) : [roi.x0, roi.x1];
+      const ys = roi.shape === "polygon" ? roi.pts.map((p) => p[1]) : [roi.y0, roi.y1];
+      d = `<b>${(Math.max(...xs) - Math.min(...xs)).toFixed(0)} × ${(Math.max(...ys) - Math.min(...ys)).toFixed(0)} px</b>`;
+    }
+    st = `${S.dirty ? "<b>not saved yet</b> · " : (f.roi ? "✔ saved · " : "")}${roi.shape}: ${d}`;
+  } else {
+    st = f.roi && !S.dirty ? "✔ saved" : "no area yet";
+  }
+  $("#status").innerHTML = st;
+}
+
+// ---------------------------------------------------------------- mouse / keys
+let drag = null;
+function hitPoint(sx, sy) {
+  let best = -1, bd = 10;
+  S.pts.forEach((q, i) => { const [x, y] = toScreen(q); const d = Math.hypot(x - sx, y - sy); if (d < bd) { bd = d; best = i; } });
+  return best;
+}
+cv.addEventListener("contextmenu", (e) => e.preventDefault());
+cv.addEventListener("pointerdown", (e) => {
+  if (!S.img) return;
+  cv.setPointerCapture(e.pointerId);
+  const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+  const hp = e.button === 0 ? hitPoint(sx, sy) : -1;
+  drag = hp >= 0 ? { type: "point", i: hp } : { type: "pan", x: sx, y: sy, ox: S.view.ox, oy: S.view.oy, moved: e.button !== 0 };
+});
+cv.addEventListener("pointermove", (e) => {
+  const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+  if (!drag) { cv.classList.toggle("overpoint", hitPoint(sx, sy) >= 0); return; }
+  if (drag.type === "point") { S.pts[drag.i] = toImage(sx, sy); S.dirty = true; draw(); return; }
+  const dx = sx - drag.x, dy = sy - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) > 4) drag.moved = true;
+  if (drag.moved) { cv.classList.add("panning"); S.view.ox = drag.ox + dx; S.view.oy = drag.oy + dy; draw(); }
+});
+cv.addEventListener("pointerup", (e) => {
+  const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+  cv.classList.remove("panning");
+  if (drag && drag.type === "pan" && !drag.moved && e.button === 0) addPoint(toImage(sx, sy));
+  drag = null;
+});
+cv.addEventListener("wheel", (e) => {
+  if (!S.img) return;
+  e.preventDefault();
+  const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
+  const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015));
+  const s = Math.min(Math.max(S.view.s * k, 0.02), 40);
+  const [ix, iy] = toImage(sx, sy);
+  S.view = { s, ox: sx - ix * s, oy: sy - iy * s };
+  draw();
+}, { passive: false });
+
+function addPoint(p) {
+  if (S.shape === "full") { toast("Whole frame: nothing to click – just press Save &amp; next."); return; }
+  if ((S.shape === "rectangle" || S.shape === "square") && S.pts.length >= 2) {
+    const two = S.pts.slice(-2);
+    const k = Math.hypot(p[0] - two[0][0], p[1] - two[0][1]) <= Math.hypot(p[0] - two[1][0], p[1] - two[1][1]) ? 0 : 1;
+    two[k] = p; S.pts = two;
+  } else S.pts.push(p);
+  S.dirty = true; draw();
+}
+
+document.addEventListener("keydown", (e) => {
+  const tag = (document.activeElement && document.activeElement.tagName) || "";
+  if (["INPUT", "SELECT", "TEXTAREA"].includes(tag) && document.activeElement.type !== "range") return;
+  if (!$("#helpModal").classList.contains("hidden") || !$("#copyModal").classList.contains("hidden")) {
+    if (e.key === "Escape") closeModals(); return;
+  }
+  if (e.key === "Escape") { hidePopover(); return; }
+  if (S.cur < 0) return;
+  if (e.key === "Enter") { e.preventDefault(); saveAndNext(); }
+  else if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); undo(); }
+  else if (e.key === "ArrowRight" && S.info?.kind === "video") { e.preventDefault(); stepFrame(1); }
+  else if (e.key === "ArrowLeft" && S.info?.kind === "video") { e.preventDefault(); stepFrame(-1); }
+  else if (e.key.toLowerCase() === "f") fitView();
+});
+
+function undo() { if (S.pts.length) { S.pts.pop(); S.dirty = true; draw(); } }
+
+// ============================================================================ shapes toolbar
+function setShape(shape, clear = true) {
+  if (shape === S.shape && !clear) return;
+  S.shape = shape;
+  if (clear) { S.pts = []; S.dirty = true; }
+  $$("#shapeButtons button").forEach((b) => b.classList.toggle("on", b.dataset.shape === shape));
+  draw();
+}
+$$("#shapeButtons button").forEach((b) => b.addEventListener("click", () => {
+  if (b.dataset.shape === S.shape) return;
+  if (S.pts.length && !confirm(`Switch to ${b.dataset.shape}? The points you clicked will be cleared.`)) return;
+  setShape(b.dataset.shape); saveSettings({ default_shape: b.dataset.shape });
+}));
+$("#btnUndo").onclick = undo;
+$("#btnClear").onclick = () => { S.pts = []; S.dirty = true; draw(); };
+$("#btnFit").onclick = fitView;
+$("#btnPrevRoi").onclick = () => {
+  if (!S.prevRoi) { toast("No previous area yet – save one first."); return; }
+  setShape(S.prevRoi.shape); S.pts = pointsFromRoi(S.prevRoi); S.dirty = true; draw();
+};
+
+// ============================================================================ folder & files
+async function openFolder(path) {
+  if (!path) return;
+  if (!(await leaveFile())) return;
+  try {
+    const d = await api("/api/folder", { path });
+    S.folder = d.path; S.files = d.files; S.outputDir = d.output_dir;
+    S.checked = new Set(S.files.map((f) => f.name));
+    S.cur = -1; S.prevRoi = [...S.files].reverse().find((f) => f.roi)?.roi || null;
+    $("#folderPath").value = d.path;
+    fillRecent(d.recent);
+    $("#emptyMsg").classList.add("hidden");
+    renderFiles(); renderRunSummary();
+    const first = S.files.findIndex((f) => !f.roi);
+    if (S.files.length) openFile(first >= 0 ? first : 0);
+    else { $("#emptyMsg").classList.remove("hidden"); $("#emptyMsg p").innerHTML = "<b>No videos or images</b> in this folder."; }
+  } catch (e) { toast(e.message, true); }
+}
+async function refreshFiles() {
+  if (!S.folder) return;
+  try {
+    const d = await api("/api/folder", { path: S.folder });
+    const byName = Object.fromEntries(d.files.map((f) => [f.name, f]));
+    S.files.forEach((f) => { if (byName[f.name]) { f.done = byName[f.name].done; f.roi = byName[f.name].roi; } });
+    S.outputDir = d.output_dir; renderFiles(); renderRunSummary();
+  } catch (_) { /* ignore */ }
+}
+function fillRecent(list) {
+  $("#recent").innerHTML = '<option value="">Recent ▾</option>' + (list || []).map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
+}
+$("#btnOpenFolder").onclick = $("#btnOpenFolder2").onclick = async () => {
+  const d = await api("/api/pick-folder", { prompt: "Choose the folder with your videos / images" }).catch((e) => toast(e.message, true));
+  if (d && d.path) openFolder(d.path);
+};
+$("#folderPath").addEventListener("keydown", (e) => { if (e.key === "Enter") openFolder(e.target.value.trim()); });
+$("#recent").onchange = (e) => { if (e.target.value) openFolder(e.target.value); e.target.value = ""; };
+
+function visibleFiles() {
+  return S.files.map((f, i) => [f, i]).filter(([f]) =>
+    S.filter === "all" || (S.filter === "roi" && f.roi) || (S.filter === "noroi" && !f.roi) || S.filter === f.kind);
+}
+function renderFiles() {
+  const ul = $("#fileList");
+  ul.innerHTML = visibleFiles().map(([f, i]) => `
+    <li data-i="${i}" class="${i === S.cur ? "active" : ""}">
+      <input type="checkbox" ${S.checked.has(f.name) ? "checked" : ""} title="Include in processing">
+      <span>${f.kind === "video" ? "🎞" : "🖼"}</span>
+      <span class="fname" title="${esc(f.name)}">${esc(f.name)}</span>
+      <span class="badges">${f.roi ? `<span class="badge roi">${f.roi.shape === "full" ? "whole" : "ROI"}</span>` : ""}${f.done ? '<span class="badge done">done</span>' : ""}</span>
+      <span class="fsub">${fmtBytes(f.bytes)}${f.roi ? " · " + f.roi.shape : ""}</span>
+    </li>`).join("");
+  $$("#fileList li").forEach((li) => {
+    const i = +li.dataset.i;
+    li.querySelector("input").addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.target.checked ? S.checked.add(S.files[i].name) : S.checked.delete(S.files[i].name);
+      renderRunSummary();
+    });
+    li.addEventListener("click", () => openFile(i));
+  });
+  const nroi = S.files.filter((f) => f.roi).length;
+  $("#fileSummary").textContent = S.folder ? `${S.files.length} files · ${nroi} with ROI` : "No folder open";
+  $("#chkAll").checked = S.files.length > 0 && S.files.every((f) => S.checked.has(f.name));
+}
+$("#chkAll").onchange = (e) => {
+  visibleFiles().forEach(([f]) => (e.target.checked ? S.checked.add(f.name) : S.checked.delete(f.name)));
+  renderFiles(); renderRunSummary();
+};
+$("#fileFilter").onchange = (e) => { S.filter = e.target.value; renderFiles(); };
+
+async function leaveFile() {
+  if (S.cur < 0 || !S.dirty) return true;
+  const roi = roiFromPoints(S.shape, S.pts);
+  if (!roi) return true;
+  if (confirm(`Save the area you drew on "${S.files[S.cur].name}" before leaving it?`)) return await saveRoi();
+  return true;
+}
+
+// ============================================================================ open a file / frames
+async function openFile(i) {
+  if (i === S.cur) return;
+  if (!(await leaveFile())) return;
+  const f = S.files[i]; if (!f) return;
+  S.cur = i; S.gen++; const gen = S.gen;
+  S.frames = new Map(); S.fullRes = false; S.img = null;
+  renderFiles();
+  $("#fileTitle").textContent = f.name;
+  $("#loading").classList.remove("hidden");
+  try {
+    S.info = await api("/api/info?" + qs({ folder: S.folder, name: f.name }));
+  } catch (e) { toast(e.message, true); $("#loading").classList.add("hidden"); return; }
+  if (gen !== S.gen) return;
+  [S.W, S.H] = S.info.size;
+  const shape = f.roi ? f.roi.shape : (S.settings.default_shape || "circle");
+  setShape(shape, false);
+  S.pts = pointsFromRoi(f.roi); S.dirty = false;
+  const meta = S.info.kind === "video"
+    ? `${S.W}×${S.H} · ${S.info.fps ?? "?"} fps · ${fmtTime(S.info.duration || 0)} · ${S.info.codec || ""}`
+    : `${S.W}×${S.H} · image`;
+  $("#fileTitle").innerHTML = `<b>${esc(f.name)}</b> · ${meta} · ${fmtBytes(f.bytes)} <span class="muted">(${i + 1}/${S.files.length})</span>`;
+  $("#frameBar").classList.toggle("hidden", S.info.kind !== "video");
+  if (S.info.kind === "video") {
+    const n = S.info.times.length;
+    $("#frameSlider").max = n - 1; $("#frameSlider").value = 0; S.frameIdx = 0;
+    await showFrame(0, gen, true);
+    preloadFrames(gen);
+  } else {
+    const img = await loadImage(frameUrl(f.name, 0, 2400)).catch((e) => { toast("Could not load: " + e.message, true); return null; });
+    if (gen !== S.gen || !img) return;
+    S.img = img; fitView();
+    $("#loading").classList.add("hidden");
+    prefetchNext(gen);
+  }
+}
+
+const frameUrl = (name, t, w, fast = true) => "/api/frame?" + qs({ folder: S.folder, name, t, w, fast: fast ? 1 : 0 });
+function loadImage(url) {
+  return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error("frame could not be read")); im.src = url; });
+}
+function frameLabel() {
+  const t = S.info.times[S.frameIdx], n = S.info.times.length;
+  $("#frameLabel").textContent = `${S.frameIdx + 1}/${n} · ${fmtTime(t)} / ${fmtTime(S.info.duration || 0)}` + (S.fullRes ? " · full res" : "");
+}
+async function showFrame(k, gen = S.gen, first = false) {
+  S.frameIdx = k; $("#frameSlider").value = k; S.fullRes = false; frameLabel();
+  let img = S.frames.get(k);
+  if (!img) {
+    $("#loading").classList.remove("hidden");
+    img = await loadImage(frameUrl(S.files[S.cur].name, S.info.times[k], 1280)).catch(() => null);
+    if (img) S.frames.set(k, img);
+  }
+  if (gen !== S.gen || S.frameIdx !== k) return;
+  $("#loading").classList.add("hidden");
+  if (!img) { toast("Could not read this frame", true); return; }
+  S.img = img;
+  if (first) fitView(); else draw();
+  updatePreloadLabel();
+}
+function stepFrame(d) {
+  if (!S.info || S.info.kind !== "video") return;
+  const k = Math.min(Math.max(S.frameIdx + d, 0), S.info.times.length - 1);
+  if (k !== S.frameIdx) showFrame(k);
+}
+$("#frameSlider").addEventListener("input", (e) => showFrame(+e.target.value));
+$("#btnFramePrev").onclick = () => stepFrame(-1);
+$("#btnFrameNext").onclick = () => stepFrame(1);
+$("#btnFullRes").onclick = async () => {
+  const gen = S.gen, k = S.frameIdx;
+  $("#loading").classList.remove("hidden"); $("#loading").textContent = "loading full resolution…";
+  const img = await loadImage(frameUrl(S.files[S.cur].name, S.info.times[k], 0, false)).catch(() => null);
+  $("#loading").textContent = "loading…";
+  if (gen !== S.gen || S.frameIdx !== k) return;
+  $("#loading").classList.add("hidden");
+  if (img) { S.img = img; S.fullRes = true; frameLabel(); draw(); }
+};
+
+function bisectOrder(n) {
+  const order = [], seen = new Set(), q = [[0, n - 1]];
+  for (const k of [0, n - 1]) if (!seen.has(k)) { order.push(k); seen.add(k); }
+  while (q.length) {
+    const [a, b] = q.shift(), m = (a + b) >> 1;
+    if (!seen.has(m)) { order.push(m); seen.add(m); }
+    if (m - a > 1) q.push([a, m]);
+    if (b - m > 1) q.push([m, b]);
+  }
+  for (let k = 0; k < n; k++) if (!seen.has(k)) order.push(k);
+  return order;
+}
+function updatePreloadLabel() {
+  if (!S.info || S.info.kind !== "video") return;
+  const n = S.info.times.length, k = S.frames.size;
+  $("#preloadLabel").textContent = k < n ? `previews ${k}/${n}` : "all previews loaded ✔";
+}
+async function preloadFrames(gen) {
+  const name = S.files[S.cur].name, times = S.info.times, order = bisectOrder(times.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < order.length && gen === S.gen) {
+      const k = order[next++];
+      if (S.frames.has(k)) continue;
+      const img = await loadImage(frameUrl(name, times[k], 1280)).catch(() => null);
+      if (gen !== S.gen) return;
+      if (img) { S.frames.set(k, img); updatePreloadLabel(); }
+    }
+  };
+  await Promise.all([worker(), worker()]);
+  if (gen === S.gen) prefetchNext(gen);
+}
+async function prefetchNext(gen) {
+  // warm up the first frames of the next file so "Save & next" is instant
+  const nf = S.files[S.cur + 1];
+  if (!nf || gen !== S.gen) return;
+  try {
+    const info = await api("/api/info?" + qs({ folder: S.folder, name: nf.name }));
+    if (gen !== S.gen) return;
+    if (info.kind === "video") {
+      const t = info.times, ks = [...new Set([0, t.length >> 1, t.length - 1])];
+      for (const k of ks) { if (gen !== S.gen) return; await loadImage(frameUrl(nf.name, t[k], 1280)).catch(() => null); }
+    } else await loadImage(frameUrl(nf.name, 0, 2400)).catch(() => null);
+  } catch (_) { /* ignore */ }
+}
+
+// ============================================================================ saving ROIs
+async function saveRoi() {
+  const f = S.files[S.cur];
+  const roi = roiFromPoints(S.shape, S.pts);
+  if (!roi) { toast(`${S.shape}: ${HINT[S.shape]} first (need ${NEED[S.shape]} points).`, true); return false; }
+  try {
+    const d = await api("/api/roi", { folder: S.folder, name: f.name, shape: S.shape, points: S.pts });
+    f.roi = d.roi; S.prevRoi = d.roi; S.dirty = false;
+    renderFiles(); renderRunSummary(); draw();
+    return true;
+  } catch (e) { toast(e.message, true); return false; }
+}
+async function saveAndNext() {
+  if (S.cur < 0) return;
+  if (!(S.files[S.cur].roi && !S.dirty) && !(await saveRoi())) return;
+  if (S.cur + 1 < S.files.length) openFile(S.cur + 1);
+  else toast("✔ That was the last file. Check the settings on the right and press <b>▶ Process</b>.", false, 6000);
+}
+$("#btnSaveNext").onclick = saveAndNext;
+$("#btnPrevFile").onclick = () => { if (S.cur > 0) openFile(S.cur - 1); };
+$("#btnRemoveRoi").onclick = async () => {
+  const f = S.files[S.cur]; if (!f) return;
+  if (!f.roi) { S.pts = []; S.dirty = false; draw(); return; }
+  if (!confirm(`Delete the saved area of "${f.name}"?`)) return;
+  try {
+    await api("/api/roi", { folder: S.folder, name: f.name, shape: null });
+    f.roi = null; S.pts = []; S.dirty = false; renderFiles(); renderRunSummary(); draw();
+  } catch (e) { toast(e.message, true); }
+};
+$("#btnCopyRoi").onclick = async () => {
+  const f = S.files[S.cur]; if (!f) return;
+  if (S.dirty && !(await saveRoi())) return;
+  if (!f.roi) { toast("Draw and save an area on this file first.", true); return; }
+  $("#copyFrom").textContent = f.name; $("#copyModal").classList.remove("hidden");
+};
+$("#btnCopyGo").onclick = async () => {
+  const targets = $("input[name=copyTargets]:checked").value;
+  try {
+    const d = await api("/api/roi/copy", { folder: S.folder, name: S.files[S.cur].name, targets });
+    closeModals(); await refreshFiles();
+    toast(`Area copied to ${d.copied.length} file(s)` + (d.skipped.length ? ` · ${d.skipped.length} skipped (different size)` : ""));
+  } catch (e) { toast(e.message, true); }
+};
+
+// ============================================================================ settings
+const NUM = ["out_w", "out_h", "crf", "jpeg_quality", "parallel", "preview_n"];
+const SEL = ["scale_mode", "transparent_video_format", "image_format", "no_roi", "preset"];
+const CHK = ["uniform", "audio", "hwaccel", "overwrite"];
+const colorToHex = (c) => { const x = document.createElement("canvas").getContext("2d"); x.fillStyle = "#000"; x.fillStyle = c; return x.fillStyle; };
+
+function fillSettings(s) {
+  NUM.forEach((k) => ($("#s_" + k).value = s[k]));
+  SEL.forEach((k) => ($("#s_" + k).value = s[k]));
+  CHK.forEach((k) => ($("#s_" + k).checked = !!s[k]));
+  $("#s_output_dir").value = s.output_dir || "";
+  $(`input[name=size_mode][value=${s.size_mode}]`).checked = true;
+  const keep = !s.fps; $("#fpsKeep").checked = keep; $("#s_fps").disabled = keep; $("#s_fps").value = keep ? "" : s.fps;
+  const bg = s.background;
+  const radio = bg === "black" || bg === "white" || bg === "transparent" ? bg : "custom";
+  $(`input[name=bg][value=${radio}]`).checked = true;
+  if (radio === "custom") $("#bgColor").value = colorToHex(bg);
+  $("#transpOpts").classList.toggle("hidden", bg !== "transparent");
+  $("#crfVal").textContent = s.crf; $("#jqVal").textContent = s.jpeg_quality;
+  const box = s.size_mode === "box";
+  ["#s_out_w", "#s_out_h", "#sizePreset", "#s_scale_mode"].forEach((q) => ($(q).disabled = !box));
+}
+function collectSettings() {
+  const s = {};
+  NUM.forEach((k) => (s[k] = +$("#s_" + k).value));
+  SEL.forEach((k) => (s[k] = $("#s_" + k).value));
+  CHK.forEach((k) => (s[k] = $("#s_" + k).checked));
+  s.output_dir = $("#s_output_dir").value.trim();
+  s.size_mode = $("input[name=size_mode]:checked").value;
+  s.fps = $("#fpsKeep").checked ? 0 : +$("#s_fps").value || 0;
+  const bg = $("input[name=bg]:checked").value;
+  s.background = bg === "custom" ? $("#bgColor").value : bg;
+  return s;
+}
+let saveTimer;
+async function saveSettings(partial) {
+  try {
+    const d = await api("/api/settings", partial);
+    S.settings = d.settings; fillSettings(S.settings);
+    if (S.folder) refreshFiles(); else renderRunSummary();
+  } catch (e) { toast(e.message, true); }
+}
+function onSettingChange() { clearTimeout(saveTimer); saveTimer = setTimeout(() => saveSettings(collectSettings()), 250); }
+$$(".settings input, .settings select").forEach((el) => {
+  if (el.id === "sizePreset") return;
+  el.addEventListener("change", onSettingChange);
+});
+$("#s_crf").addEventListener("input", (e) => ($("#crfVal").textContent = e.target.value));
+$("#s_jpeg_quality").addEventListener("input", (e) => ($("#jqVal").textContent = e.target.value));
+$("#fpsKeep").addEventListener("change", (e) => { if (!e.target.checked && !$("#s_fps").value) $("#s_fps").value = 10; });
+$("#sizePreset").onchange = (e) => {
+  if (!e.target.value) return;
+  const [w, h] = e.target.value.split("x"); $("#s_out_w").value = w; $("#s_out_h").value = h;
+  e.target.value = ""; onSettingChange();
+};
+$("#bgColor").addEventListener("input", () => { $("input[name=bg][value=custom]").checked = true; });
+$("#btnPickOut").onclick = async () => {
+  const d = await api("/api/pick-folder", { prompt: "Choose the output folder" }).catch((e) => toast(e.message, true));
+  if (d && d.path) { $("#s_output_dir").value = d.path; onSettingChange(); }
+};
+$("#btnReset").onclick = async () => {
+  if (!confirm("Reset all settings to their defaults?")) return;
+  const d = await api("/api/settings/reset", {}); S.settings = d.settings; fillSettings(S.settings); refreshFiles();
+};
+const PRESETS = {
+  dlc: [{ size_mode: "box", out_w: 720, out_h: 720, uniform: true, scale_mode: "fit", background: "black", fps: 10, crf: 20,
+          image_format: "same", no_roi: "skip", audio: false },
+        "DeepLabCut: black outside, all 720 × 720, 10 fps, MP4"],
+  slides: [{ size_mode: "box", out_w: 1920, out_h: 1080, uniform: false, scale_mode: "fit", background: "transparent",
+             transparent_video_format: "mov", fps: 0, image_format: "png", audio: false },
+           "Presentation: transparent outside, just the crop (max 1920 × 1080), original fps, .mov / .png"],
+  downsample: [{ size_mode: "box", out_w: 1280, out_h: 720, uniform: false, scale_mode: "fit", background: "black", fps: 0,
+                 no_roi: "full", image_format: "same" },
+               "Only downsample: whole frame for files without area, max 1280 × 720, original fps"],
+};
+$$("[data-preset]").forEach((b) => (b.onclick = async () => {
+  const [p, msg] = PRESETS[b.dataset.preset]; await saveSettings(p); toast("✔ " + msg, false, 5000);
+}));
+
+function renderRunSummary() {
+  const s = S.settings; if (!s) return;
+  $("#outDirResolved").textContent = S.folder ? "→ " + (S.outputDir || "") : "";
+  if (!S.folder) { $("#runSummary").textContent = "Open a folder first."; $("#btnProcess").disabled = true; return; }
+  const sel = S.files.filter((f) => S.checked.has(f.name));
+  const withRoi = sel.filter((f) => f.roi), without = sel.length - withRoi.length;
+  const n = s.no_roi === "full" ? sel.length : withRoi.length;
+  const nv = (s.no_roi === "full" ? sel : withRoi).filter((f) => f.kind === "video").length;
+  const size = s.size_mode === "original" ? "original resolution" : `fit in ${s.out_w}×${s.out_h}`;
+  const bg = s.background === "transparent" ? `transparent (${s.transparent_video_format} / png)` : s.background;
+  let txt = `<b>${n}</b> file${n === 1 ? "" : "s"} (${nv} video, ${n - nv} image) · ${size}` +
+    `${s.uniform ? ", all same size" : ", just the crop"} · ${nv ? (s.fps ? s.fps + " fps · " : "original fps · ") : ""}background ${esc(bg)}`;
+  if (without && s.no_roi === "skip") txt += `<br><span class="muted">${without} ticked file(s) without area will be skipped.</span>`;
+  $("#runSummary").innerHTML = txt;
+  $("#btnProcess").textContent = `▶ Process ${n} file${n === 1 ? "" : "s"}`;
+  $("#btnProcess").disabled = n === 0;
+}
+
+// ============================================================================ processing
+$("#btnProcess").onclick = async () => {
+  if (S.dirty && roiFromPoints(S.shape, S.pts) && confirm("Save the area you are drawing first?")) await saveRoi();
+  try {
+    const names = S.files.filter((f) => S.checked.has(f.name)).map((f) => f.name);
+    const d = await api("/api/process", { folder: S.folder, names });
+    renderJobs(d.jobs, true);
+    startPolling();
+  } catch (e) { toast(e.message, true, 6000); }
+};
+$("#btnCancel").onclick = async () => { await api("/api/cancel", {}); toast("Cancelling…"); };
+$("#btnRevealOut").onclick = async () => {
+  if (!S.outputDir) return toast("Open a folder first.");
+  api("/api/reveal", { path: S.outputDir }).catch((e) => toast(e.message, true));
+};
+
+function renderJobs(jobs, busy) {
+  const now = Date.now() / 1000;
+  $("#jobs").innerHTML = jobs.map((j) => {
+    let eta = "";
+    if (j.status === "running" && j.started && j.progress > 0.02) eta = ` · ${fmtTime((now - j.started) * (1 - j.progress) / j.progress)} left`;
+    const pct = Math.round((j.progress || 0) * 100);
+    const label = { queued: "waiting", running: `${pct}%`, done: "✔ done", failed: "✖ failed", skipped: "skipped", cancelled: "cancelled" }[j.status];
+    return `<div class="job ${j.status}">
+      <div class="jl"><span class="jn" title="${esc(j.name)} → ${esc(j.output)}">${j.kind === "video" ? "🎞" : "🖼"} ${esc(j.name)}</span><span>${label}</span></div>
+      <div class="bar"><div style="width:${j.status === "running" || j.status === "done" ? pct : 0}%"></div></div>
+      <div class="jt" title="${esc(j.text || "")}">${esc(j.text || "")}${eta}</div></div>`;
+  }).join("");
+  $("#btnCancel").classList.toggle("hidden", !busy);
+  $("#btnProcess").disabled = busy || !S.folder;
+}
+function startPolling() {
+  clearInterval(S.polling);
+  S.polling = setInterval(async () => {
+    try {
+      const d = await api("/api/jobs");
+      renderJobs(d.jobs, d.busy);
+      if (!d.busy) {
+        clearInterval(S.polling); S.polling = null;
+        const c = (st) => d.jobs.filter((j) => j.status === st).length;
+        const took = d.batch && d.batch.finished ? ` in ${fmtTime(d.batch.finished - d.batch.started)}` : "";
+        toast(`Finished${took}: ${c("done")} done` + (c("skipped") ? `, ${c("skipped")} skipped` : "") +
+              (c("failed") ? `, <b>${c("failed")} failed</b>` : "") + (c("cancelled") ? `, ${c("cancelled")} cancelled` : ""),
+              c("failed") > 0, 8000);
+        await refreshFiles(); renderRunSummary();
+      }
+    } catch (_) { /* server busy – try again */ }
+  }, 700);
+}
+
+// ============================================================================ popovers, help, modals
+function hidePopover() { $("#popover").classList.add("hidden"); }
+document.addEventListener("click", (e) => {
+  const i = e.target.closest(".info");
+  if (i && i.dataset.help) {
+    e.preventDefault(); e.stopPropagation();
+    const pop = $("#popover");
+    pop.innerHTML = INFO[i.dataset.help] || "";
+    pop.classList.remove("hidden");
+    const r = i.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+    let x = Math.min(r.left, window.innerWidth - pw - 10), y = r.bottom + 6;
+    if (y + ph > window.innerHeight - 10) y = r.top - ph - 6;
+    pop.style.left = Math.max(10, x) + "px"; pop.style.top = Math.max(10, y) + "px";
+    return;
+  }
+  if (!e.target.closest("#popover")) hidePopover();
+  if (e.target.matches("[data-close]") || e.target.classList.contains("modal")) closeModals();
+}, true);
+
+function closeModals() { $$(".modal").forEach((m) => m.classList.add("hidden")); }
+function openHelp(section = 0) {
+  const nav = $("#helpNav");
+  nav.innerHTML = HELP.map(([t], k) => `<a href="#" data-k="${k}">${t}</a>`).join("");
+  const show = (k) => {
+    $$("#helpNav a").forEach((a) => a.classList.toggle("on", +a.dataset.k === k));
+    $("#helpContent").innerHTML = `<h3>${HELP[k][0]}</h3>` + HELP[k][1];
+    if (HELP[k][0] === "System check") renderSysCheck();
+  };
+  $$("#helpNav a").forEach((a) => (a.onclick = (e) => { e.preventDefault(); show(+a.dataset.k); }));
+  show(section);
+  $("#helpModal").classList.remove("hidden");
+}
+function renderSysCheck() {
+  const s = S.sys || {};
+  const ok = (b) => (b ? "✔" : "✖");
+  $("#syscheck").innerHTML = `<table>
+    <tr><td>CropKit</td><td>${esc(s.version || "?")}</td></tr>
+    <tr><td>Python</td><td>${esc(s.python || "?")} (${esc(s.platform || "?")})</td></tr>
+    <tr><td>ffmpeg (videos)</td><td>${ok(s.ffmpeg)} ${esc(s.ffmpeg || "not found")}<br><span class="muted">${esc(s.ffmpeg_version || "")}</span></td></tr>
+    <tr><td>Video types</td><td>${esc((s.video_exts || []).join(" "))}</td></tr>
+    <tr><td>Image types</td><td>${esc((s.image_exts || []).join(" "))}</td></tr>
+    <tr><td>Settings file</td><td><code>~/.cropkit/settings.json</code></td></tr>
+  </table>`;
+}
+$("#btnHelp").onclick = $("#btnHelp2").onclick = () => openHelp(0);
+$("#btnHelpClose").onclick = closeModals;
+$("#btnQuit").onclick = async () => {
+  if (!confirm("Stop CropKit? (Running jobs are cancelled.)")) return;
+  try { await api("/api/quit", {}); } catch (_) { /* server already gone */ }
+  document.body.innerHTML = '<div style="padding:60px;text-align:center;font-family:sans-serif"><h2>CropKit stopped.</h2><p>You can close this window. Start it again with start.command (Mac) or start.bat (Windows).</p></div>';
+};
+
+// ============================================================================ start
+(async function init() {
+  try {
+    S.sys = await api("/api/state");
+  } catch (e) { toast("Cannot reach the CropKit server: " + e.message, true, 10000); return; }
+  S.settings = S.sys.settings;
+  S.shape = S.settings.default_shape || "circle";
+  setShape(S.shape, false);
+  fillSettings(S.settings); fillRecent(S.settings.recent_folders); renderRunSummary(); resizeCanvas();
+  if (!S.sys.ffmpeg) toast("ffmpeg was not found: images work, videos won't. See Help → Troubleshooting.", true, 10000);
+  const j = await api("/api/jobs").catch(() => null);
+  if (j && j.jobs.length) { renderJobs(j.jobs, j.busy); if (j.busy) startPolling(); }
+  if (S.settings.recent_folders && S.settings.recent_folders[0]) openFolder(S.settings.recent_folders[0]);
+})();

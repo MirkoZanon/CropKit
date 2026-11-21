@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CropKit</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><img src="/static/icon.svg" alt="" class="logo"><span>CropKit</span></div>
+  <div class="folderbox">
+    <button id="btnOpenFolder" class="primary" title="Choose the folder with your videos / images">📁 Open folder…</button>
+    <div class="pathwrap">
+      <input id="folderPath" type="text" placeholder="…or paste a folder path here and press Enter" spellcheck="false">
+      <select id="recent" title="Recent folders"><option value="">Recent ▾</option></select>
+    </div>
+  </div>
+  <div class="topright">
+    <button id="btnHelp" title="Instructions">? Help</button>
+    <button id="btnQuit" class="ghost" title="Stop CropKit">⏻ Quit</button>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- ============================== files -->
+  <aside class="panel files">
+    <div class="panelhead">
+      <h2>1 · Files <span class="info" data-help="files">i</span></h2>
+      <div class="small muted" id="fileSummary">No folder open</div>
+    </div>
+    <div class="fileactions">
+      <label class="chk"><input type="checkbox" id="chkAll" checked> all</label>
+      <select id="fileFilter" title="Show">
+        <option value="all">show all</option>
+        <option value="noroi">without ROI</option>
+        <option value="roi">with ROI</option>
+        <option value="video">videos</option>
+        <option value="image">images</option>
+      </select>
+    </div>
+    <ul id="fileList" class="filelist"></ul>
+    <div class="legend small muted">
+      <span class="dot roi"></span>ROI drawn <span class="dot done"></span>output exists
+    </div>
+  </aside>
+
+  <!-- ============================== editor -->
+  <section class="panel editor">
+    <div class="panelhead">
+      <h2>2 · Draw the area to keep <span class="info" data-help="draw">i</span></h2>
+      <div id="fileTitle" class="small muted">Open a folder and pick a file</div>
+    </div>
+    <div class="toolbar">
+      <div class="seg" id="shapeButtons">
+        <button data-shape="circle" title="Circle: click 3+ points on the edge">◯ Circle</button>
+        <button data-shape="rectangle" title="Rectangle: click 2 opposite corners">▭ Rectangle</button>
+        <button data-shape="square" title="Square: click 2 opposite corners">□ Square</button>
+        <button data-shape="polygon" title="Polygon: click the corners in order">⬠ Polygon</button>
+        <button data-shape="full" title="Whole frame: no crop, only downsample">⛶ Whole frame</button>
+      </div>
+      <span class="info" data-help="shapes">i</span>
+      <div class="spacer"></div>
+      <button id="btnUndo" title="Remove last point (Backspace)">↶ Undo</button>
+      <button id="btnClear" title="Remove all points">✕ Clear</button>
+      <button id="btnPrevRoi" title="Copy the area of the last file you saved">⧉ Previous</button>
+    </div>
+    <div class="stage" id="stage">
+      <canvas id="canvas"></canvas>
+      <div class="empty" id="emptyMsg">
+        <div class="bigicon">✂️</div>
+        <p><b>Open a folder</b> with videos or images to start.</p>
+        <p class="muted small">Supported: videos (mp4, mov, avi, mkv…) and images (jpg, png, tif, webp, bmp).</p>
+        <p><button class="primary" id="btnOpenFolder2">📁 Open folder…</button> <button id="btnHelp2">? How it works</button></p>
+      </div>
+      <div class="hud" id="hud"></div>
+      <div class="stagebtns"><button id="btnFit" title="Show the whole picture (F)">⤢ Fit</button></div>
+      <div class="loading hidden" id="loading">loading…</div>
+    </div>
+    <div class="framebar hidden" id="frameBar">
+      <button id="btnFramePrev" title="Previous preview frame (←)">◀</button>
+      <input type="range" id="frameSlider" min="0" max="0" value="0">
+      <button id="btnFrameNext" title="Next preview frame (→)">▶</button>
+      <span id="frameLabel" class="small mono"></span>
+      <span class="info" data-help="frames">i</span>
+      <button id="btnFullRes" title="Load this moment at full resolution">🔍 Full resolution</button>
+      <span id="preloadLabel" class="small muted"></span>
+    </div>
+    <div class="savebar">
+      <div id="status" class="status">—</div>
+      <div class="spacer"></div>
+      <button id="btnRemoveRoi" class="ghost" title="Delete the saved ROI of this file">Remove ROI</button>
+      <button id="btnCopyRoi" title="Copy this file's saved ROI to the other files">⇉ Copy to other files…</button>
+      <button id="btnPrevFile" title="Previous file">◀ Prev</button>
+      <button id="btnSaveNext" class="primary" title="Save the ROI and open the next file (Enter)">✔ Save &amp; next ▶</button>
+    </div>
+  </section>
+
+  <!-- ============================== settings + run -->
+  <aside class="panel settings">
+    <div class="panelhead">
+      <h2>3 · Output settings <span class="info" data-help="settings">i</span></h2>
+      <div class="presets small">
+        Quick setup:
+        <button data-preset="dlc" title="Black outside, same size for all, MP4, 10 fps">DeepLabCut</button>
+        <button data-preset="slides" title="Transparent outside, just the crop">Presentation</button>
+        <button data-preset="downsample" title="No crop, half size, keep everything">Only downsample</button>
+      </div>
+    </div>
+    <div class="scroll">
+      <fieldset>
+        <legend>Where</legend>
+        <label class="row">Output folder <span class="info" data-help="output_dir">i</span></label>
+        <div class="inline">
+          <input type="text" id="s_output_dir" placeholder="(input folder)/cropped" spellcheck="false">
+          <button id="btnPickOut" title="Choose…">📁</button>
+        </div>
+        <div class="small muted" id="outDirResolved"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Size</legend>
+        <label class="row radio"><input type="radio" name="size_mode" value="box"> Fit into
+          <span class="info" data-help="size_box">i</span></label>
+        <div class="inline sizeinputs">
+          <input type="number" id="s_out_w" min="16" step="2"> × <input type="number" id="s_out_h" min="16" step="2"> px
+          <select id="sizePreset" title="Common sizes">
+            <option value="">presets ▾</option>
+            <option value="480x480">480 × 480 (square)</option>
+            <option value="720x720">720 × 720 (square)</option>
+            <option value="1080x1080">1080 × 1080 (square)</option>
+            <option value="640x480">640 × 480 (VGA)</option>
+            <option value="1280x720">1280 × 720 (HD)</option>
+            <option value="1920x1080">1920 × 1080 (Full HD)</option>
+            <option value="3840x2160">3840 × 2160 (4K)</option>
+          </select>
+        </div>
+        <label class="row radio"><input type="radio" name="size_mode" value="original"> Keep original resolution
+          <span class="info" data-help="size_original">i</span></label>
+        <label class="row chk"><input type="checkbox" id="s_uniform"> All outputs the same size (ROI centred)
+          <span class="info" data-help="uniform">i</span></label>
+        <label class="row">Scaling between files <span class="info" data-help="scale_mode">i</span></label>
+        <select id="s_scale_mode">
+          <option value="fit">each ROI fills the frame (recommended)</option>
+          <option value="same_scale">same zoom for every file</option>
+        </select>
+      </fieldset>
+
+      <fieldset>
+        <legend>Outside the ROI</legend>
+        <label class="row">Background <span class="info" data-help="background">i</span></label>
+        <div class="inline bgchoice">
+          <label><input type="radio" name="bg" value="black"> <span class="sw" style="background:#000"></span>black</label>
+          <label><input type="radio" name="bg" value="white"> <span class="sw" style="background:#fff"></span>white</label>
+          <label><input type="radio" name="bg" value="custom"> <input type="color" id="bgColor" value="#3060a0"></label>
+          <label><input type="radio" name="bg" value="transparent"> <span class="sw checker"></span>transparent</label>
+        </div>
+        <div id="transpOpts" class="sub">
+          <label class="row">Transparent videos saved as <span class="info" data-help="transparent_format">i</span></label>
+          <select id="s_transparent_video_format">
+            <option value="mov">.mov – ProRes 4444 (Keynote, Final Cut, Premiere)</option>
+            <option value="webm">.webm – VP9 (web pages, smaller)</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Videos</legend>
+        <label class="row">Frame rate <span class="info" data-help="fps">i</span></label>
+        <div class="inline">
+          <input type="number" id="s_fps" min="0" max="240" step="1"> fps
+          <label class="chk"><input type="checkbox" id="fpsKeep"> keep original</label>
+        </div>
+        <label class="row">Quality <span id="crfVal" class="mono small"></span> <span class="info" data-help="crf">i</span></label>
+        <input type="range" id="s_crf" min="14" max="32" step="1">
+        <div class="rangelabels small muted"><span>best / big files</span><span>small files</span></div>
+        <label class="row chk"><input type="checkbox" id="s_audio"> Keep sound <span class="info" data-help="audio">i</span></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Images</legend>
+        <label class="row">Save as <span class="info" data-help="image_format">i</span></label>
+        <select id="s_image_format">
+          <option value="same">same format as the original</option>
+          <option value="png">PNG (lossless, transparency)</option>
+          <option value="jpg">JPEG (small)</option>
+          <option value="webp">WebP (small, transparency)</option>
+          <option value="tif">TIFF (lossless)</option>
+        </select>
+        <label class="row">JPEG / WebP quality <span id="jqVal" class="mono small"></span></label>
+        <input type="range" id="s_jpeg_quality" min="50" max="100" step="1">
+      </fieldset>
+
+      <fieldset>
+        <legend>Files without ROI</legend>
+        <select id="s_no_roi">
+          <option value="skip">skip them</option>
+          <option value="full">process the whole frame (only downsample)</option>
+        </select>
+        <span class="info" data-help="no_roi">i</span>
+      </fieldset>
+
+      <details class="advanced">
+        <summary>Advanced</summary>
+        <label class="row chk"><input type="checkbox" id="s_hwaccel"> Hardware video decoding <span class="info" data-help="hwaccel">i</span></label>
+        <label class="row">Videos at the same time <span class="info" data-help="parallel">i</span></label>
+        <input type="number" id="s_parallel" min="1" max="8">
+        <label class="row">Encoding speed <span class="info" data-help="preset">i</span></label>
+        <select id="s_preset">
+          <option>ultrafast</option><option>superfast</option><option>veryfast</option><option>faster</option>
+          <option>fast</option><option>medium</option><option>slow</option>
+        </select>
+        <label class="row">Preview frames per video <span class="info" data-help="preview_n">i</span></label>
+        <input type="number" id="s_preview_n" min="5" max="200">
+        <label class="row chk"><input type="checkbox" id="s_overwrite"> Overwrite existing outputs <span class="info" data-help="overwrite">i</span></label>
+        <p><button id="btnReset" class="ghost small">Reset all settings</button></p>
+      </details>
+    </div>
+
+    <div class="runbox">
+      <h2>4 · Process <span class="info" data-help="process">i</span></h2>
+      <div id="runSummary" class="small"></div>
+      <div class="inline">
+        <button id="btnProcess" class="go">▶ Process</button>
+        <button id="btnCancel" class="danger hidden">■ Cancel</button>
+        <button id="btnRevealOut" title="Show the output folder">📂 Show output</button>
+      </div>
+      <div id="jobs" class="jobs"></div>
+    </div>
+  </aside>
+</main>
+
+<div id="popover" class="popover hidden"></div>
+<div id="toast" class="toast hidden"></div>
+
+<div id="helpModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modalbox">
+    <div class="modalhead">
+      <h2>CropKit – how it works</h2>
+      <button id="btnHelpClose" class="ghost">✕</button>
+    </div>
+    <div class="modalbody">
+      <nav id="helpNav"></nav>
+      <div id="helpContent"></div>
+    </div>
+  </div>
+</div>
+
+<div id="copyModal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modalbox small">
+    <div class="modalhead"><h2>Copy this ROI</h2><button class="ghost" data-close>✕</button></div>
+    <div class="modalbody single">
+      <p>Copy the saved ROI of <b id="copyFrom"></b> to:</p>
+      <p><label><input type="radio" name="copyTargets" value="missing" checked> files that don't have an ROI yet</label><br>
+         <label><input type="radio" name="copyTargets" value="all"> all other files (replaces their ROI)</label></p>
+      <p class="small muted">Only files with the same pixel size are changed (an ROI only makes sense on images of the same size).
+         Useful when the camera didn't move between recordings.</p>
+      <p><button class="primary" id="btnCopyGo">Copy</button> <button data-close>Cancel</button></p>
+    </div>
+  </div>
+</div>
+
+<script src="/static/help.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
