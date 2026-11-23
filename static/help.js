@@ -1,5 +1,17 @@
 /* Texts for the (i) bubbles and the Help window. */
 window.INFO = {
+  task_join: `<p>For a recording that was <b>split into several files</b> – the camera stopped and was restarted, or a GoPro cut a long
+    recording into chapters (GX01…, GX02…). The parts are put one after the other and become <b>one video</b>.</p>
+    <p>It's a step of its own, <b>before</b> everything else: the joined video is then cropped, resized… like any other, with
+    one area for the whole recording. Choose only Join to just glue the parts together – then nothing is re-encoded,
+    the result is bit-for-bit the original frames.</p>`,
+  join: `<p>CropKit suggests groups from the names (GoPro chapters <code>GX010123 → GX020123</code>, <code>clip</code> +
+    <code>clip_suite</code>, <code>part1/part2</code>…) and the recording times. Check them: rename the result, change the order
+    with ↑ ↓, take parts out with ✕, add videos with ＋.</p>
+    <p>The parts must have the <b>same picture size, frame rate and video format</b> (they do when they come from the same camera
+    recording). Groups are saved in <code>joins.json</code> in your folder. The times where each part starts in the joined
+    video are written to <code>processing_params.json</code>.</p>
+    <p>Videos not in a group stay separate and are processed as usual.</p>`,
   task_crop: `<p>Keep only part of the picture: a <b>circle</b>, <b>rectangle</b>, <b>square</b> or any <b>polygon</b> you draw
     on each file. Everything outside becomes black, a colour of your choice, or transparent.</p>
     <p>Example: cut a video down to the arena an animal moves in.</p>`,
@@ -8,7 +20,8 @@ window.INFO = {
   task_fps: `<p>Videos only: keep fewer frames per second (60 fps → 10 fps keeps every 6th frame). The video lasts just as long,
     the file is much smaller, and tracking runs much faster.</p>`,
   order: `<p>Whatever you choose, CropKit always works in this order, in a single pass:</p>
-    <p><b>① drop frames</b> first – every later step only touches the frames you keep (fastest);<br>
+    <p><b>⓪ join</b> split recordings (if chosen) – the parts are read one after the other as one video;<br>
+    <b>① drop frames</b> first – every later step only touches the frames you keep (fastest);<br>
     <b>② crop</b> on the original pixels – the area is exactly what you drew;<br>
     <b>③ resize</b> only what's left – no time spent on pixels that are thrown away, best quality;<br>
     <b>④ background / border</b> – fill outside the area and pad to a common size;<br>
@@ -43,9 +56,11 @@ window.INFO = {
   exact_fit: `<p><b>Add borders</b>: the whole picture is kept and centred; the empty sides get the background colour.</p>
     <p><b>Fill the frame</b>: the picture is enlarged until the frame is full; what sticks out is cut off.</p>
     <p><b>Stretch</b>: squeezed to the exact size – proportions change (circles become ovals).</p>`,
-  uniform: `<p><b>On</b>: every output has exactly the same size; the picture is centred and the rest filled with the background.
-    <b>Needed for DeepLabCut</b> and handy for comparing files.</p>
-    <p><b>Off</b>: each file is only as big as its own picture (e.g. <b>just the crop</b>, nice for presentations).</p>`,
+  uniform: `<p><b>Just the area</b>: each result is the smallest rectangle around its area – no borders. Without Resize there
+    is no size to set: the area keeps its original pixels. With Resize the size you set is a <b>maximum</b>.</p>
+    <p><b>Same frame for every file</b>: every result has exactly the same size; the area is centred and the rest is filled with
+    the background colour. <b>Needed for DeepLabCut</b> and handy for comparing files. With Resize “fit in box” the frame is the
+    box; without Resize it's the size of the biggest area.</p>`,
   scale_mode: `<p><b>Each ROI fills the frame</b>: every area is scaled as big as possible. If the arena has the same real size in all
     videos, 1 pixel = the same distance in all outputs (one px → cm factor).</p>
     <p><b>Same zoom for every file</b>: all files are shrunk by the same factor, so areas that look smaller in the camera stay smaller.</p>`,
@@ -113,12 +128,13 @@ window.HELP = [
   ["What to do & in which order", `
     <table>
       <tr><th>Task</th><th>What it does</th></tr>
+      <tr><td>🔗 Join</td><td>Videos split in several files (camera restarted, GoPro chapters) become one video, before anything else.</td></tr>
       <tr><td>✂️ Crop</td><td>Keep an area (circle, rectangle, square, polygon); outside = colour or transparent.</td></tr>
       <tr><td>⤡ Resize</td><td>Fit in a box, exact size (borders / fill / stretch) or percentage. Smaller = downsampling.</td></tr>
       <tr><td>⏱ Frame rate</td><td>Videos: keep fewer frames per second.</td></tr>
     </table>
     <p>Combine them freely. CropKit always applies them in one pass, in this order:</p>
-    <p><b>① drop frames → ② crop → ③ resize → ④ background / border → ⑤ save</b></p>
+    <p><b>⓪ join → ① drop frames → ② crop → ③ resize → ④ background / border → ⑤ save</b></p>
     <ul>
       <li><b>Frames first</b>: every later step only touches the frames you keep – the biggest speed-up.</li>
       <li><b>Crop before resize</b>: the area is exact in the original pixels, and no time or quality is spent resizing
@@ -136,6 +152,10 @@ window.HELP = [
   ["What happens to your pictures", `
     <p>CropKit changes only what you ask for. Each card in <b>Result</b> shows a live <i>How it's done</i> note for the file you
     are looking at; here is the full picture.</p>
+    <h3>🔗 Join</h3>
+    <p>The parts are read one after the other (ffmpeg “concat”) as one continuous video; nothing is blended at the joins. With
+    only Join chosen, the compressed data is copied as it is – no decoding, no re-encoding, no quality change, same file type.
+    With other tasks the joined video goes through them in the same single pass and is saved once.</p>
     <h3>✂️ Crop</h3>
     <p>Pixels inside the area are <b>copied exactly</b> – no resampling, no smoothing. Only the outline of a circle or polygon is
     softened over about 1 pixel (anti-aliasing), so the edge isn't jagged. Everything outside becomes the background colour

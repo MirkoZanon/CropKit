@@ -68,6 +68,40 @@ button.update { background: #fff4d6; border-color: #f0c040; color: #7a5300; font
 .hm-hero h1 { font-size: 30px; letter-spacing: -.02em; margin: 0 0 4px; }
 .hm-sub { margin: 0 0 20px; color: var(--muted); font-size: 15px; display: flex; align-items: center; gap: 6px; }
 .tasks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+/* Join: a step before the others, so a wide tile of its own above them */
+.task.jointask { display: flex; flex-direction: row; align-items: center; gap: 14px; width: 100%; margin-bottom: 14px; text-align: left; }
+.task.jointask .ticon { margin: 0; }
+.task.jointask .jt { display: flex; flex-direction: column; gap: 2px; padding-right: 30px; }
+.task.jointask .tcheck { top: 50%; transform: translateY(-50%); }
+label.radio { display: flex; gap: 9px; align-items: flex-start; padding: 6px 0; cursor: pointer; }
+label.radio input { margin-top: 3px; }
+label.radio small { display: block; color: var(--muted); font-size: 12px; }
+#fsFrame { margin-top: 10px; }
+/* join step */
+.joinwrap { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr); gap: 18px; align-items: start; }
+.joingroups { display: flex; flex-direction: column; gap: 12px; }
+.jgroup { border: 1.5px solid var(--line); border-radius: 14px; padding: 12px 14px; background: #fff; cursor: pointer; }
+.jgroup.sel { border-color: var(--accent); box-shadow: 0 4px 16px rgba(47,111,222,.12); }
+.jgroup.bad { border-color: #e7a3a3; }
+.jghead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.jghead input { flex: 1; font-weight: 600; font-size: 15px; }
+.jghead .ext { color: var(--muted); font-size: 13px; }
+.jpart { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 5px 4px; border-top: 1px solid #eef0f4; font-size: 13px; }
+.jpart .pn { color: var(--muted); text-align: right; }
+.jpart .pnm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jpart .pt { color: var(--muted); font-variant-numeric: tabular-nums; }
+.jpart .pb { display: flex; gap: 2px; }
+.jpart .pb button, .jvid button { padding: 2px 7px; font-size: 12px; }
+.jgfoot { display: flex; gap: 10px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.jgfoot .warn { color: var(--danger); font-weight: 600; }
+.joinvids { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; background: #fafbfd; max-height: 62vh; overflow: auto; }
+.joinvids h3 { margin: 0 0 4px; font-size: 14px; }
+.jvid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; padding: 6px 0; border-top: 1px solid #eef0f4; font-size: 13px; }
+.jvid .vn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jvid small { display: block; color: var(--muted); font-size: 11.5px; }
+.jvid.used { opacity: .5; }
+.jempty { border: 1.5px dashed var(--line); border-radius: 14px; padding: 22px; text-align: center; color: var(--muted); }
+@media (max-width: 900px) { .joinwrap { grid-template-columns: 1fr; } }
 .task {
   position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left;
   padding: 18px 18px 16px; border: 2px solid var(--line); border-radius: 16px; background: #fff; box-shadow: var(--shadow);
@@ -327,3 +361,5 @@ label.row { display: flex; align-items: center; gap: 7px; margin: 8px 0; }
 .drow.failed { background: #fdeeee; } .drow.failed .ds { color: var(--danger); white-space: normal; }
 /* while processing: only progress + Stop */
 .running #existingBox, .running #btnProcess, .running #runSummary { display: none !important; }
+
+body.joinonly .notjoin { display: none; }

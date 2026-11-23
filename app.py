@@ -10,6 +10,7 @@ import argparse
 import io
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -37,7 +38,7 @@ LOG_PATH = DATA_DIR / "cropkit.log"         # output when started from the app i
 DEFAULT_PORT = 5056
 
 DEFAULTS = {
-    "tasks": {"crop": True, "resize": True, "fps": True},   # what to do (chosen on the Home screen)
+    "tasks": {"join": False, "crop": True, "resize": True, "fps": True},   # what to do (chosen on the Home screen)
     "output_dir": "",               # "" -> <input folder>/<output_subfolder>
     "output_subfolder": "cropped",
     "resize_mode": "fit",           # "fit" inside out_w x out_h | "exact" out_w x out_h | "percent"
@@ -112,13 +113,13 @@ def clean_settings(new: dict, old: dict) -> dict:
             s[k] = bool(new[k])
     num("out_w", 16, 16384); num("out_h", 16, 16384)
     s["out_w"] -= s["out_w"] % 2; s["out_h"] -= s["out_h"] % 2
-    num("fps", 0, 240, float)
+    num("fps", 1, 240, float)
     num("percent", 1, 1000, float)
     num("jpeg_quality", 10, 100); num("crf", 0, 51); num("parallel", 1, 8); num("preview_n", 5, 200)
     choice("resize_mode", ("fit", "exact", "percent")); choice("exact_fit", ("pad", "fill", "stretch"))
     choice("scale_mode", ("fit", "same_scale"))
     if isinstance(new.get("tasks"), dict):
-        s["tasks"] = {k: bool(new["tasks"].get(k, s["tasks"].get(k))) for k in ("crop", "resize", "fps")}
+        s["tasks"] = {k: bool(new["tasks"].get(k, s["tasks"].get(k))) for k in ("join", "crop", "resize", "fps")}
     choice("transparent_video_format", ("mov", "webm")); choice("image_format", ("same", "png", "jpg", "webp", "tif"))
     choice("preset", ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"))
     choice("no_roi", ("skip", "full")); choice("default_shape", media.SHAPES)
@@ -156,7 +157,52 @@ def _folder(arg) -> Path:
     return p
 
 
-def _file(folder, name) -> Path:
+def _groups(folder: Path) -> list[dict]:
+    """Saved joined-video groups whose parts all still exist (at least 2 parts)."""
+    names = {p.name for p in media.list_media(folder)}
+    out = []
+    for g in media.load_joins(folder):
+        parts = [n for n in g.get("parts", []) if n in names]
+        if len(parts) >= 2 and g.get("name"):
+            out.append(dict(g, parts=parts))
+    return out
+
+
+def _joined(folder: Path, g: dict) -> "media.Joined":
+    return media.Joined(g["name"], [folder / n for n in g["parts"]])
+
+
+def only_join(s=None) -> bool:
+    t = (s or SETTINGS)["tasks"]
+    return t.get("join") and not (t.get("crop") or t.get("resize") or t.get("fps"))
+
+
+def sources(folder: Path, s=None) -> dict:
+    """What the steps work on, by name: the files of the folder, where (when Join is on) the parts of each
+    joined video are replaced by one joined video '<name>.join'. With only Join on: just the joined videos."""
+    s = s or SETTINGS
+    files = {p.name: p for p in media.list_media(folder)}
+    if not s["tasks"].get("join"):
+        return files
+    joined, used = {}, set()
+    for g in _groups(folder):
+        j = _joined(folder, g)
+        joined[j.name] = j
+        used.update(g["parts"])
+    if only_join(s):
+        return joined
+    out = {n: p for n, p in files.items() if n not in used}
+    out.update(joined)
+    return dict(sorted(out.items(), key=lambda kv: kv[0].lower()))
+
+
+def _file(folder, name):
+    if str(name or "").endswith(media.JOIN_SUFFIX):
+        folder = _folder(folder)
+        for g in _groups(folder):
+            if g["name"] + media.JOIN_SUFFIX == name:
+                return _joined(folder, g)
+        raise FileNotFoundError(f"Joined video not found: {name}")
     f = _folder(folder) / name
     if not f.is_file() or f.parent.resolve() != _folder(folder).resolve():
         raise FileNotFoundError(f"File not found: {name}")
@@ -383,15 +429,19 @@ def file_list(folder: Path):
     out_dir = output_dir_for(folder, SETTINGS)
     runs = _previous_runs(out_dir)
     files = []
-    for p in media.list_media(folder):
+    copy = only_join()
+    for p in sources(folder).values():
         kind = media.media_kind(p)
-        ext = media.output_ext(kind, p.name, SETTINGS)
+        ext = media.output_ext(kind, p, SETTINGS, copy=copy)
         out = out_dir / (p.stem + ext)
         done = out.exists()
-        files.append(dict(name=p.name, kind=kind, bytes=p.stat().st_size, roi=rois.get(p.name), done=done,
-                          output=out.name,
-                          done_info=(_describe_run(runs.get(p.name)) or
-                                     time.strftime("%Y-%m-%d %H:%M", time.localtime(out.stat().st_mtime))) if done else ""))
+        f = dict(name=p.name, kind=kind, bytes=p.stat().st_size, roi=rois.get(p.name), done=done,
+                 output=out.name,
+                 done_info=(_describe_run(runs.get(p.name)) or
+                            time.strftime("%Y-%m-%d %H:%M", time.localtime(out.stat().st_mtime))) if done else "")
+        if isinstance(p, media.Joined):
+            f.update(label=p.label, parts=[q.name for q in p.parts], problems=media.media_info(p)["problems"])
+        files.append(f)
     return files, rois
 
 
@@ -448,6 +498,56 @@ def frame():
     return Response(data, mimetype="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
 
+# ============================================================================ routes: joined videos
+def _video_row(p: Path) -> dict:
+    i = media.media_info(p)
+    return dict(name=p.name, duration=i.get("duration"), size=i.get("size"), fps=i.get("fps"), codec=i.get("codec"),
+                audio=i.get("audio"), created=i.get("created"), bytes=p.stat().st_size)
+
+
+@app.get("/api/joins")
+def get_joins():
+    """Videos of the folder, the saved groups and suggested groups (split recordings)."""
+    folder = _folder(request.args.get("folder"))
+    vids = [p for p in media.list_media(folder) if media.media_kind(p) == "video"]
+    rows, bad = [], []
+    for p in vids:
+        try:
+            rows.append(_video_row(p))
+        except Exception:  # noqa: BLE001
+            bad.append(p.name)
+    ok = [folder / r["name"] for r in rows]
+    groups = _groups(folder)
+    for g in groups:
+        g["problems"] = media.joined_problems([media.media_info(folder / n) for n in g["parts"]])
+    return jsonify(videos=rows, unreadable=bad, groups=groups, saved=(folder / "joins.json").exists(),
+                   suggestions=media.suggest_joins(ok))
+
+
+@app.post("/api/joins")
+def set_joins():
+    """Body: {folder, groups: [{name, parts}]} -> saved in <folder>/joins.json."""
+    d = request.get_json(force=True) or {}
+    folder = _folder(d.get("folder"))
+    vids = {p.name for p in media.list_media(folder) if media.media_kind(p) == "video"}
+    clean, seen, used = [], set(), set()
+    for g in d.get("groups") or []:
+        name = re.sub(r'[\\/:*?"<>|]+', "_", str(g.get("name") or "").strip()).strip(". ")
+        parts = [n for n in g.get("parts") or [] if n in vids and n not in used]
+        if not name or len(parts) < 2:
+            continue
+        k = 2
+        base = name
+        while name.lower() in seen:
+            name = f"{base}_{k}"; k += 1
+        seen.add(name.lower()); used.update(parts)
+        clean.append(dict(name=name, parts=parts))
+    media.save_joins(folder, clean)
+    for g in clean:
+        g["problems"] = media.joined_problems([media.media_info(folder / n) for n in g["parts"]])
+    return jsonify(groups=clean)
+
+
 # ============================================================================ routes: ROIs
 _ROI_LOCK = threading.Lock()
 
@@ -489,7 +589,7 @@ def copy_roi():
             raise ValueError("This file has no saved ROI yet.")
         copied, skipped = [], []
         only = set(d["names"]) if isinstance(d.get("names"), list) else None
-        for p in media.list_media(folder):
+        for p in sources(folder).values():
             if p.name == f.name or (only is not None and p.name not in only) or (d.get("targets") != "all" and p.name in rois):
                 continue
             try:
@@ -538,7 +638,7 @@ def _run_job(job, s, folder: Path, out_dir: Path):
     if RUN.cancel.is_set():
         _job_update(job, status="cancelled"); return
     _job_update(job, status="running", started=time.time(), text="starting")
-    src = folder / job["name"]
+    src = _file(folder, job["name"])
     dst = out_dir / job["output"]
     try:
         if job["kind"] == "image":
@@ -552,7 +652,7 @@ def _run_job(job, s, folder: Path, out_dir: Path):
             src, dst, job["roi"], tuple(job["size"]), job["canvas"], job["fps"], s["background"],
             s["crf"], s["preset"], s["hwaccel"], s["audio"], work_dir=out_dir / "_logs",
             log_path=out_dir / "_logs" / (src.stem + ".log"), progress=prog, cancel=RUN.cancel, procs=RUN.procs,
-            post=job["post"])
+            post=job["post"], copy=job.get("copy", False))
         if ok:
             _job_update(job, status="done", progress=1.0, text=f"done · {mode}", finished=time.time())
         elif RUN.cancel.is_set():
@@ -573,6 +673,16 @@ def _write_params(folder, out_dir, jobs, s):
     for j in jobs:
         if j["status"] != "done":
             continue
+        joined = None
+        if j.get("parts"):
+            joined = dict(parts=j["parts"], note="the parts were played one after the other; part_start_s = where "
+                          "each part starts in the joined video (time 0 = start of the first part)")
+        if j.get("copy"):
+            params["files"][j["name"]] = dict(output=j["output"], tasks=s["tasks"], joined=joined,
+                                              how="parts copied one after the other, nothing re-encoded "
+                                                  "(pictures, frame rate and size unchanged)",
+                                              processed=time.strftime("%Y-%m-%d %H:%M:%S"))
+            continue
         x0, y0, w, h = media.crop_box(j["roi"])
         sw, sh = j["size"]
         fw, fh = j["post"] or j["size"]
@@ -591,6 +701,8 @@ def _write_params(folder, out_dir, jobs, s):
             frame_selection=(f"nearest original frame to every 1/{j['fps']:g} s; no blending or interpolation"
                              if j["kind"] == "video" and j["fps"] else None),
             processed=time.strftime("%Y-%m-%d %H:%M:%S"))
+        if joined:
+            params["files"][j["name"]]["joined"] = joined
     params["how_to_map_back"] = ("x_original = (x_output - roi_offset_out_px[0]) / scale_out_per_in[0] + "
                                  "crop_origin_in_px[0]   (same for y with index 1)")
     p.write_text(json.dumps(params, indent=2))
@@ -615,14 +727,22 @@ def process():
         raise ValueError("The output folder must be different from the input folder.")
     tasks = s["tasks"]
     if not any(tasks.values()):
-        raise ValueError("Choose at least one thing to do on the Home screen (crop, resize or frame rate).")
+        raise ValueError("Choose at least one thing to do on the Home screen (join, crop, resize or frame rate).")
     names = d.get("names")
+    copy = only_join(s)
     rois = media.load_rois(folder) if tasks["crop"] else {}
-    all_files = {p.name: p for p in media.list_media(folder)}
-    names = [n for n in (names if names is not None else all_files) if n in all_files]
+    all_files = sources(folder, s)
+    bad = [n for n, p in all_files.items() if isinstance(p, media.Joined) and media.media_info(p)["problems"]]
+    if bad and names is not None and any(n in bad for n in names):
+        raise ValueError("These videos can't be joined: " + "; ".join(
+            f"{all_files[n].label}: {', '.join(media.media_info(all_files[n])['problems'])}" for n in bad if n in names)
+            + ". Change the groups in the Join step.")
+    names = [n for n in (names if names is not None else [n for n in all_files if n not in bad]) if n in all_files]
     plan_rois, skipped = {}, []
     for n in names:
         roi = rois.get(n)
+        if copy:
+            plan_rois[n] = None; continue
         if roi is None and (not tasks["crop"] or s["no_roi"] == "full"):
             W, H = media.media_info(all_files[n])["size"]
             roi = media.roi_from_points("full", [], W, H)
@@ -634,17 +754,24 @@ def process():
                          "(draw one, or set 'Files without area' to 'whole frame').")
     if any(media.media_kind(n) == "video" for n in plan_rois) and not media.FFMPEG:
         raise RuntimeError("ffmpeg is needed for videos but was not found (see Help → System check).")
-    plan = media.plan_outputs(plan_rois, list(plan_rois), {**s, "resize": tasks["resize"]})
+    # "same size for all" only means something when cropping or resizing (otherwise pictures keep their size)
+    uniform = s["uniform"] and (tasks["crop"] or tasks["resize"])
+    plan = {} if copy else media.plan_outputs(plan_rois, list(plan_rois),
+                                              {**s, "resize": tasks["resize"], "uniform": uniform})
     fps = (s["fps"] or None) if tasks["fps"] else None
     out_dir.mkdir(parents=True, exist_ok=True)
     jobs = []
     for n, roi in plan_rois.items():
-        kind = media.media_kind(n)
-        output = Path(n).stem + media.output_ext(kind, n, s)
-        pl = plan[n]
+        src = all_files[n]
+        kind = media.media_kind(src)
+        output = src.stem + media.output_ext(kind, src, s, copy=copy)
+        pl = plan.get(n) or dict(size=(0, 0), post=None, canvas=None)
         job = dict(id=uuid.uuid4().hex[:8], name=n, kind=kind, output=output, roi=roi, size=list(pl["size"]),
                    post=list(pl["post"]) if pl["post"] else None, canvas=list(pl["canvas"]) if pl["canvas"] else None,
-                   fps=fps if kind == "video" else None, status="queued", progress=0.0, text="waiting")
+                   fps=fps if kind == "video" else None, status="queued", progress=0.0, text="waiting", copy=copy)
+        if isinstance(src, media.Joined):
+            job.update(label=src.label, parts=[dict(name=p["name"], part_start_s=p["start"], duration_s=p["duration"])
+                                               for p in media.media_info(src)["parts"]])
         if (out_dir / output).exists() and not s["overwrite"]:
             job.update(status="skipped", progress=1.0, text="done before – kept as it was")
         jobs.append(job)

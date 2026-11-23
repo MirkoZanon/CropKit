@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageOps
@@ -65,8 +66,137 @@ def _no_window():
     return {"creationflags": 0x08000000} if os.name == "nt" else {}
 
 
+# ============================================================================ joined recordings
+JOIN_SUFFIX = ".join"
+
+
+class Joined:
+    """A recording that was split into several files, used as ONE video (parts played one after the other).
+    Behaves enough like a Path for the rest of CropKit: .name, .stem, .suffix, .parent, .stat()."""
+
+    def __init__(self, name: str, parts):
+        self.parts = [Path(p) for p in parts]
+        self.label = name
+        self.stem = name
+        self.suffix = JOIN_SUFFIX
+        self.name = name + JOIN_SUFFIX
+        self.parent = self.parts[0].parent
+
+    def __str__(self):
+        return "join:" + "|".join(str(p) for p in self.parts)
+
+    def stat(self):
+        st = [p.stat() for p in self.parts]
+        return SimpleNamespace(st_mtime=max(x.st_mtime for x in st), st_size=sum(x.st_size for x in st))
+
+    def concat_list(self, folder: Path) -> Path:
+        """ffmpeg concat-demuxer list of the parts, in order."""
+        folder.mkdir(parents=True, exist_ok=True)
+        f = folder / f"_join_{self.stem}.txt"
+        f.write_text("".join("file '" + str(p.resolve()).replace("'", "'\\''") + "'\n" for p in self.parts))
+        return f
+
+
+# names of split recordings: GoPro chapters (GX010123 = chapter 01 of recording 0123), numbered parts
+# (clip_1, clip (2), clip-part3) and continuation words (clip_suite, clip_cont)
+_GOPRO = re.compile(r"^(G[HXLP]?)(\d{2})(\d{4})$", re.I)
+_WORD = re.compile(r"^(.*?)[ _.-]*(suite|seguito|cont|continued|continuation|bis|next)[ _.-]*(\d{1,3})?$", re.I)
+_NUM = re.compile(r"^(.*?)[ _.-]*(?:part|pt|seg|segment|chapter|ch|p)?[ _.-]*\(?(\d{1,3})\)?$", re.I)
+
+
+def _split_name(stem: str):
+    """(base, order, strong): files with the same base may be parts of one recording; strong = clear evidence."""
+    m = _GOPRO.match(stem)
+    if m:
+        return f"{m.group(1).upper()}{m.group(3)}", int(m.group(2)), True
+    m = _WORD.match(stem)
+    if m and m.group(1):
+        return m.group(1), 1 + int(m.group(3) or 1), True
+    m = _NUM.match(stem)
+    if m and m.group(1) and not m.group(1)[-1:].isdigit():
+        return m.group(1), int(m.group(2)), False
+    return stem, 0, False
+
+
+def _parse_time(s):
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def suggest_joins(videos) -> list[dict]:
+    """Guess which videos are parts of one split recording. Returns [{name, parts: [file names in order], why}].
+    Only parts with the same size and frame rate are grouped; plain numbered names (mouse1, mouse2…) are only grouped
+    when the recordings follow each other in time (to avoid joining different animals or sessions)."""
+    groups: dict = {}
+    names = [(Path(v), _split_name(Path(v).stem)) for v in videos]
+    strong_bases = {b.lower().rstrip(" _.-") for _, (b, _, st) in names if st}
+    for v, (base, order, strong) in names:
+        if v.stem.lower().rstrip(" _.-") in strong_bases:   # "clip" next to "clip_suite": clip is part 1
+            base, order, strong = v.stem, 1, True
+        groups.setdefault((base.lower().rstrip(" _.-"), v.suffix.lower()), []).append((order, v, strong, base))
+    out = []
+    for (key, _), items in groups.items():
+        if len(items) < 2 or not any(o or st for o, _, st, _ in items):
+            continue
+        items.sort(key=lambda x: (x[0], x[1].name.lower()))
+        infos = [media_info(v) for _, v, _, _ in items]
+        if len({tuple(i["size"] or ()) for i in infos}) > 1 or len({round(i["fps"] or 0, 2) for i in infos}) > 1:
+            continue
+        strong = any(st for _, _, st, _ in items)
+        why = "names" + (" (GoPro chapters)" if _GOPRO.match(items[0][1].stem) else "")
+        times = [_parse_time(i.get("created")) for i in infos]
+        if all(t is not None for t in times):
+            order = sorted(range(len(items)), key=lambda k: times[k])
+            if strong:
+                items = [items[k] for k in order]
+            else:   # numbered names: each part must start soon after the previous one ended (< 10 min gap)
+                ok = all(0 <= times[order[k + 1]] - (times[order[k]] + (infos[order[k]]["duration"] or 0)) < 600
+                         for k in range(len(order) - 1))
+                if not ok:
+                    continue
+                items = [items[k] for k in order]
+                why = "names and recording times"
+        elif not strong:
+            continue
+        base = items[0][3].rstrip(" _.-") or items[0][1].stem
+        out.append({"name": f"{base}_joined", "parts": [v.name for _, v, _, _ in items], "why": why})
+    return out
+
+
+def load_joins(folder) -> list[dict]:
+    p = Path(folder) / "joins.json"
+    try:
+        return json.loads(p.read_text()).get("groups", [])
+    except Exception:
+        return []
+
+
+def save_joins(folder, groups: list[dict]):
+    p = Path(folder) / "joins.json"
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"groups": groups}, indent=2))
+    os.replace(tmp, p)
+
+
+def joined_problems(info_parts: list[dict]) -> list[str]:
+    """Why these parts can't be joined into one video (different size / frame rate / codec)."""
+    probs = []
+    if len({tuple(i["size"] or ()) for i in info_parts}) > 1:
+        probs.append("the parts have different picture sizes")
+    if len({round(i["fps"] or 0, 2) for i in info_parts}) > 1:
+        probs.append("the parts have different frame rates")
+    if len({i["codec"] for i in info_parts}) > 1:
+        probs.append("the parts use different video formats")
+    return probs
+
+
 # ============================================================================ files
 def media_kind(path) -> str | None:
+    if isinstance(path, Joined) or str(path).endswith(JOIN_SUFFIX):
+        return "video"
     ext = Path(path).suffix.lower()
     if ext in VIDEO_EXTS:
         return "video"
@@ -112,17 +242,28 @@ def video_info(path) -> dict:
         if re.search(r"rotat\w*\D{0,20}-?(90|270)", txt):
             size = size[::-1]
     has_audio = bool(re.search(r"Stream #\d+:\d+.*?: Audio:", txt))
+    m = re.search(r"creation_time\s*:\s*(\S+)", txt)
     return {"kind": "video", "duration": dur, "fps": fps, "codec": codec, "pix_fmt": pix,
-            "size": size, "audio": has_audio}
+            "size": size, "audio": has_audio, "created": m.group(1) if m else None}
 
 
 def media_info(path) -> dict:
-    path = Path(path)
-    key = (str(path), path.stat().st_mtime, path.stat().st_size)
+    if not isinstance(path, Joined):
+        path = Path(path)
+    st = path.stat()
+    key = (str(path), st.st_mtime, st.st_size)
     if key in _INFO_CACHE:
         return _INFO_CACHE[key]
     kind = media_kind(path)
-    if kind == "video":
+    if isinstance(path, Joined):
+        parts = [media_info(p) for p in path.parts]
+        start, plist = 0.0, []
+        for p, i in zip(path.parts, parts):
+            plist.append({"name": p.name, "start": round(start, 3), "duration": i["duration"] or 0})
+            start += i["duration"] or 0
+        info = dict(parts[0], duration=start, parts=plist, audio=all(i["audio"] for i in parts),
+                    problems=joined_problems(parts), joined=True)
+    elif kind == "video":
         info = video_info(path)
         if not info["size"]:
             f = grab_frame(path, 0)
@@ -131,7 +272,7 @@ def media_info(path) -> dict:
         with Image.open(path) as im:
             im = ImageOps.exif_transpose(im)
             info = {"kind": "image", "size": im.size, "mode": im.mode, "format": im.format}
-    info["bytes"] = path.stat().st_size
+    info["bytes"] = st.st_size
     _INFO_CACHE[key] = info
     return info
 
@@ -140,6 +281,10 @@ def media_info(path) -> dict:
 def grab_frame(path, t=0.0, width=None, fast=False, alpha=False) -> Image.Image:
     """One frame of a video (or the image itself) as a PIL image.
     width: scale to this width. fast=True: nearest keyframe at/before t (much faster, no exact time)."""
+    if isinstance(path, Joined):   # time t of the joined recording -> the right part
+        for p, part in zip(path.parts, media_info(path)["parts"]):
+            if t < part["start"] + part["duration"] or p == path.parts[-1]:
+                return grab_frame(p, max(t - part["start"], 0), width, fast, alpha)
     if media_kind(path) == "image":
         im = ImageOps.exif_transpose(Image.open(path))
         im = im.convert("RGBA" if alpha else "RGB")
@@ -388,7 +533,10 @@ def roi_inside_mask(roi, size, clip_frame=True) -> Image.Image | None:
 
 
 # ============================================================================ output naming
-def output_ext(kind, src, settings) -> str:
+def output_ext(kind, src, settings, copy=False) -> str:
+    if copy:                                 # joined without re-encoding: same container as the parts
+        ext = src.parts[0].suffix.lower() if isinstance(src, Joined) else Path(src).suffix.lower()
+        return ext if ext in (".mp4", ".mov", ".mkv", ".m4v") else ".mkv"
     transparent = settings["background"] == "transparent"
     if kind == "video":
         return "." + settings["transparent_video_format"] if transparent else ".mp4"
@@ -536,7 +684,7 @@ def make_video_mask(roi, size, path, background):
 
 def process_video(src, dst, roi, size, canvas, fps=None, background="black", crf=20, preset="veryfast",
                   hwaccel=True, audio=False, work_dir=None, log_path=None, progress=None,
-                  cancel: threading.Event | None = None, procs: set | None = None, post=None):
+                  cancel: threading.Event | None = None, procs: set | None = None, post=None, copy=False):
     """Crop + mask + downsample one video with ffmpeg.
     progress(fraction, text) is called while running. Returns (ok, decode_mode, error_text)."""
     _need_ffmpeg()
@@ -544,20 +692,29 @@ def process_video(src, dst, roi, size, canvas, fps=None, background="black", crf
     work_dir.mkdir(parents=True, exist_ok=True)
     info = media_info(src)
     dur = info["duration"] or 0
-    mask = make_video_mask(roi, size, work_dir / f"_mask_{Path(src).stem}.png", background)
+    mask = None if copy else make_video_mask(roi, size, work_dir / f"_mask_{src.stem}.png", background)
     ext = Path(dst).suffix.lower()
     tmp = Path(dst).with_name(Path(dst).stem + ".partial" + ext)
-    log_path = Path(log_path or work_dir / (Path(src).stem + ".log"))
+    log_path = Path(log_path or work_dir / (src.stem + ".log"))
     log_path.write_text("")
     keep_audio = audio and info.get("audio")
     out_fps = fps if (fps and (not info["fps"] or fps < info["fps"])) else None
+    joined = isinstance(src, Joined)
+    src_args = ["-f", "concat", "-safe", "0", "-i", str(src.concat_list(work_dir))] if joined else ["-i", str(src)]
 
     def run(name, in_args, after_fps):
-        graph = build_filter(roi, size, canvas, out_fps, mask is not None, background, after_fps, info["pix_fmt"], post)
-        cmd = [FFMPEG, "-y", "-hide_banner", "-nostats", "-progress", "pipe:1", *in_args,
-               "-i", str(src), *(["-i", str(mask)] if mask else []), "-filter_complex", graph,
-               "-map", "[out]", *(["-map", "0:a:0?"] if keep_audio else []),
-               *encoder_args(ext, crf, preset, keep_audio), str(tmp)]
+        if name == "copy":   # only joining: parts copied one after the other, nothing re-encoded
+            tag = ["-tag:v", "hvc1"] if info.get("codec") == "hevc" and ext in (".mp4", ".mov") else []
+            cmd = [FFMPEG, "-y", "-hide_banner", "-nostats", "-progress", "pipe:1", *src_args,
+                   "-map", "0:v:0", *(["-map", "0:a:0?"] if keep_audio else []), "-c", "copy", *tag,
+                   *([] if keep_audio else ["-an"]), "-movflags", "+faststart", str(tmp)]
+        else:
+            graph = build_filter(roi, size, canvas, out_fps, mask is not None, background, after_fps,
+                                 info["pix_fmt"], post)
+            cmd = [FFMPEG, "-y", "-hide_banner", "-nostats", "-progress", "pipe:1", *in_args,
+                   *src_args, *(["-i", str(mask)] if mask else []), "-filter_complex", graph,
+                   "-map", "[out]", *(["-map", "0:a:0?"] if keep_audio else []),
+                   *encoder_args(ext, crf, preset, keep_audio), str(tmp)]
         with open(log_path, "a") as lf:
             lf.write(f"\n===== decoding: {name} =====\n" + " ".join(cmd) + "\n\n")
             lf.flush()
@@ -588,8 +745,8 @@ def process_video(src, dst, roi, size, canvas, fps=None, background="black", crf
                     procs.discard(proc)
         return proc.returncode == 0
 
-    modes = decode_modes(hwaccel)
-    best = _BEST_MODE.get("mode")
+    modes = decode_modes(hwaccel) if not copy else [("copy", [], None)]
+    best = _BEST_MODE.get("mode") if not copy else None
     if best:
         modes = [m for m in modes if m[0] == best] + [m for m in modes if m[0] != best]
     err = "ffmpeg failed"
@@ -600,7 +757,8 @@ def process_video(src, dst, roi, size, canvas, fps=None, background="black", crf
         if progress:
             progress(0.0, f"starting · {name}")
         if run(name, in_args, after_fps):
-            _BEST_MODE["mode"] = name
+            if name != "copy":
+                _BEST_MODE["mode"] = name
             os.replace(tmp, dst)
             if mask:
                 Path(mask).unlink(missing_ok=True)

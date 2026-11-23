@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.9.0
+- **Join split videos** – a new task on Home, done first, before everything else: a recording that stopped and restarted
+  (or a GoPro that cut it into chapters) becomes one video.
+  - New first step **Join videos**: CropKit suggests the groups from the names (GoPro `GX01…/GX02…`, `clip` + `clip_suite`,
+    `part1/part2`, `clip (2)`…) and recording times; rename, reorder, remove or add parts. Saved in `joins.json`.
+  - Parts must have the same picture size, frame rate and video format (checked, with a clear message).
+  - A joined video is then one file in every step: one area, preview slider across all parts (shows which part you see),
+    one result. `processing_params.json` lists the parts and where each starts.
+  - **Only** Join chosen: the parts are copied end to end **without re-encoding** – bit-for-bit the original frames, same
+    file type (HEVC tagged so it plays on Mac).
+- **Clearer result size.** The Crop card now asks *Size of the result*: **Just the area** (smallest rectangle around it) or
+  **Same frame for every file** (area centred, borders). With *just the area* and no Resize there is no size to set any more;
+  with Resize the box is labelled *Maximum size* or *Frame size* accordingly. Without Crop the same-size option is in Resize,
+  and it is ignored when neither Crop nor Resize is chosen.
+- Frame rate can no longer be saved as 0 (it showed 10 but did nothing).
+
 ## 1.8.0
 - New last step **5 · Done**: when processing ends, CropKit moves there by itself – a summary (new results, kept, failed
   with the reason, time) and **Show results**, **Process another folder**, **Change settings & run again**.

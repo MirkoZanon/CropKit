@@ -2,17 +2,19 @@
 
 <img src="static/icons/icon-512.png" width="96" align="right" alt="CropKit icon">
 
-**Crop**, **resize** and change the **frame rate** of **videos and images** – one of these, or any combination – and save
+**Join** split recordings, **crop**, **resize** and change the **frame rate** of **videos and images** – one of these, or any combination – and save
 them all in **one common format**: ready for tracking with [DeepLabCut](https://github.com/DeepLabCut/DeepLabCut),
 smaller files to share, or clean clips and pictures for a **presentation**.
 
 It runs **on your own computer** (Mac, Windows or Linux). The browser is only its window: nothing is uploaded anywhere.
 
-- A **Home screen** where you pick what to do (Crop / Resize / Frame rate) or a ready-made recipe.
+- A **Home screen** where you pick what to do (Join / Crop / Resize / Frame rate) or a ready-made recipe.
+- **Join split videos**: a recording that stopped and restarted (GoPro chapters `GX01…`/`GX02…`, `clip` + `clip_suite`,
+  `part1`/`part2`…) becomes one video. Groups are suggested from names and recording times. Join only = lossless copy.
 - Draw the area to keep: **circle**, **rectangle**, **square**, **polygon** (any shape) or the **whole frame**.
 - Resize: fit inside a box, exact size (borders / fill / stretch) or a percentage.
 - Outside the area: **black**, **white**, any **colour** or **transparent**.
-- All outputs **the same size** with the area centred (DeepLabCut), or **just the crop**.
+- **Just the area** (smallest rectangle around it, no size to set) or **the same frame for every file**, area centred (DeepLabCut).
 - Fast: preview frames load in the background; videos are processed in one ffmpeg pass,
   with the Mac's hardware decoder and several videos in parallel.
 - Your original files are **never modified**.
@@ -76,11 +78,16 @@ because it supports the hardware video decoder. Check in **Help → System check
 
 ## 3. How to use it
 
-1. **Home** – click what you want to do: **✂️ Crop**, **⤡ Resize**, **⏱ Frame rate** (any combination), or a recipe.
+1. **Home** – click what you want to do: **🔗 Join split videos**, **✂️ Crop**, **⤡ Resize**, **⏱ Frame rate** (any combination), or a recipe.
 2. **Choose your folder** (Open folder, or a recent folder). CropKit then guides you **one step at a time**
    (Back / Next at the bottom; click the CropKit logo to go back Home):
-   **Files** (tick the files; *done before* = already processed) → **Draw areas** (if you crop) → **Settings** →
-   **Review & process**.
+   **Join videos** (if you join) → **Files** (tick the files; *done before* = already processed) → **Draw areas** (if you crop) →
+   **Settings** → **Review & process**.
+   - **Join videos**: each group becomes one video, its parts played one after the other. CropKit suggests the groups
+     (GoPro chapters, `…_suite`, `part 2`, consecutive recording times); rename, reorder (↑ ↓), remove (✕) or add (＋) parts.
+     Parts must have the same picture size, frame rate and video format. From then on a joined video is one file: one area
+     for the whole recording, the preview slider runs across all parts. Groups are saved in `joins.json` in your folder.
+     With **only** Join chosen, the parts are copied end to end without re-encoding (same quality, same file type).
 3. If you crop: **draw the area to keep** on each file, then **Save · next file** (<kbd>Enter</kbd>):
 
    | Shape | How |
@@ -106,7 +113,7 @@ The areas you draw are saved in `rois.json` next to your files, so you can stop 
 or process the same files again with different settings.
 
 **Order of the steps.** Whatever you combine, CropKit works in one pass in this order:
-**drop frames → crop → resize → background / border → save** – frames first (every later step only touches the frames you
+**join → drop frames → crop → resize → background / border → save** – frames first (every later step only touches the frames you
 keep), crop before resize (exact area, no work on pixels that are thrown away), and the file is encoded only once.
 
 **Recipes:** *DeepLabCut* (crop arena, 720 × 720, 10 fps) · *Clip for slides* (crop, transparent outside) ·
@@ -120,7 +127,7 @@ keep), crop before resize (exact area, no work on pixels that are thrown away), 
 | Resize: fit inside a box | Scaled to fit inside W × H (proportions kept); optionally also enlarges smaller pictures. |
 | Resize: exact size | Exactly W × H – add borders, fill the frame (cut the edges) or stretch. |
 | Resize: percentage | e.g. 50 % = half width and height. |
-| All outputs the same size | On: identical frame size, area centred, border = background. Off: just the crop. |
+| Size of the result (Crop card) | *Just the area*: the smallest rectangle around it (no size to set without Resize; with Resize the size is a maximum). *Same frame for every file*: identical size, area centred, border = background. Without Crop this is a checkbox in Resize. |
 | Scaling between files | *Each ROI fills the frame* (same px/cm if the arena has the same real size) or *same zoom for every file*. |
 | Background | black / white / any colour / transparent. |
 | Transparent videos saved as | `.mov` ProRes 4444 (Keynote, Final Cut, Premiere…) or `.webm` VP9 (web). |
@@ -149,7 +156,8 @@ The app shows this live in a *How it's done* note in each card, with the numbers
 In the output folder:
 - one file per input, **same name** (extension may change: `.mp4` for videos, `.mov`/`.webm` if transparent,
   images as chosen);
-- `processing_params.json` – for every file: the area, crop origin and size, scale and offset in the output;
+- `processing_params.json` – for every file: the area, crop origin and size, scale and offset in the output; for joined
+  videos also the parts and where each one starts (`part_start_s`);
 - `_logs/` – ffmpeg logs of the videos (look here if one fails).
 
 ## 6. DeepLabCut

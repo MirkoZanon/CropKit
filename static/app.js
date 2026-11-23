@@ -57,8 +57,14 @@ const S = {
   view: { s: 1, ox: 0, oy: 0 }, polling: null,
 };
 
-const T = () => (S.settings && S.settings.tasks) || { crop: true, resize: true, fps: true };
+const T = () => (S.settings && S.settings.tasks) || { join: false, crop: true, resize: true, fps: true };
 const cropOn = () => !!T().crop;
+const joinOn = () => !!T().join;
+const anyTask = () => { const t = T(); return !!(t.join || t.crop || t.resize || t.fps); };
+const onlyJoin = () => { const t = T(); return !!t.join && !(t.crop || t.resize || t.fps); };
+// joined videos ("<name>.join") are shown by their name and number of parts
+const dname = (f) => f.label ? `${f.label} (${(f.parts || []).length} parts joined)` : f.name;
+const ficon = (f) => f.parts ? "🔗" : f.kind === "video" ? "🎞" : "🖼";
 
 // ============================================================================ geometry (mirror of media.py)
 function fitCircle(pts) {
@@ -229,7 +235,7 @@ function explain() {
   $("#howResize").innerHTML = HT(r + " Images and videos are treated the same way.");
   // frame rate
   let f;
-  const src = isVideo ? S.info.fps : null, tgt = +s.fps || 0;
+  const src = isVideo ? S.info.fps : null, tgt = +s.fps || +$("#s_fps").value || 10;
   if (src && tgt && tgt >= src - 0.01) f = `This video already has ${fmtN(src)} fps – its frames are kept as they are.`;
   else {
     const ratio = src && tgt ? src / tgt : null;
@@ -251,6 +257,12 @@ function explain() {
   const fmt = s.image_format === "same" ? "in their original type" : "as " + s.image_format.toUpperCase();
   const lossy = ["jpg", "webp"].includes(s.image_format) ? ` – slightly lossy (quality ${s.jpeg_quality})`
     : s.image_format === "same" ? " (PNG/TIFF lossless, JPEG/WebP at quality " + s.jpeg_quality + ")" : " – lossless";
+  if (onlyJoin()) {
+    $("#howSave").innerHTML = HT(`Only joining: the compressed video data of the parts is <b>copied one after the other</b>, nothing is
+      decoded or re-encoded – every frame is bit-for-bit the original, same size, same frame rate, same quality, same file type.
+      ${s.audio ? "Sound is kept (copied too)." : "Sound is removed."} Your original files are never touched.`);
+    return;
+  }
   $("#howSave").innerHTML = HT(`${vid} ${s.audio ? "Sound is kept (re-encoded)." : "Sound is removed."} Images are saved ${fmt}${lossy}.
     Nothing else is changed: no colour correction, no denoising, no sharpening. Your original files are never touched.`);
 }
@@ -391,23 +403,24 @@ $("#btnPrevRoi").onclick = () => {
 // ============================================================================ folder & files
 async function openFolder(path) {
   if (!path) return;
-  if (!(T().crop || T().resize || T().fps)) { toast("First pick what you want to do (Crop, Resize or Frame rate).", true); return; }
+  if (!anyTask()) { toast("First pick what you want to do (Join, Crop, Resize or Frame rate).", true); return; }
   if (!(await leaveFile())) return;
   try {
     const d = await api("/api/folder", { path });
     S.folder = d.path; S.files = d.files; S.outputDir = d.output_dir; S.nextFree = d.next_free_output;
     $("#folderName").textContent = baseName(d.path); $("#folderPill").title = d.path + " – change folder (Home)";
     S.checked = new Set(S.files.map((f) => f.name));
-    S.allowMissing = false; S.step = "files"; S.lastRun = null; S.lastResult = null;
+    S.allowMissing = false; S.step = stepList()[0]; S.lastRun = null; S.lastResult = null; S.join = null;
     $("#jobs").innerHTML = ""; $("#afterRun").classList.add("hidden");
     hideHome();
     S.cur = -1; S.prevRoi = [...S.files].reverse().find((f) => f.roi)?.roi || null;
     $("#folderPath").value = d.path;
     fillRecent(d.recent);
     renderFiles(); renderRunSummary();
+    if (joinOn()) await loadJoins();
     const first = S.files.findIndex((f) => !f.roi);
     if (S.files.length) { $("#emptyMsg").classList.add("hidden"); openFile(first >= 0 ? first : 0); }
-    else { S.img = null; draw(); $("#emptyMsg").classList.remove("hidden"); $("#emptyMsg p").innerHTML = "<b>No videos or images</b> in this folder."; }
+    else { S.img = null; draw(); $("#emptyMsg").classList.remove("hidden"); $("#emptyMsg p").innerHTML = onlyJoin() ? "<b>No joined videos yet.</b>" : "<b>No videos or images</b> in this folder."; }
   } catch (e) { toast(e.message, true); }
 }
 async function refreshFiles() {
@@ -415,7 +428,15 @@ async function refreshFiles() {
   try {
     const d = await api("/api/folder", { path: S.folder });
     const byName = Object.fromEntries(d.files.map((f) => [f.name, f]));
-    S.files.forEach((f) => { const g = byName[f.name]; if (g) { f.done = g.done; f.roi = g.roi; f.done_info = g.done_info; f.output = g.output; } });
+    const same = d.files.length === S.files.length && S.files.every((f) => byName[f.name]);
+    if (!same) {          // joined videos added/removed or Join switched on/off: new list, keep the choices made
+      const old = new Set(S.files.map((f) => f.name)), curName = S.files[S.cur] && S.files[S.cur].name;
+      S.files = d.files;
+      S.checked = new Set(S.files.map((f) => f.name).filter((n) => S.checked.has(n) || !old.has(n)));
+      const ci = S.files.findIndex((f) => f.name === curName);
+      if (ci < 0) { S.cur = -1; S.img = null; S.info = null; } else S.cur = ci;
+    }
+    S.files.forEach((f) => { const g = byName[f.name]; if (g) Object.assign(f, g); });
     S.outputDir = d.output_dir; S.nextFree = d.next_free_output; renderFiles(); renderRunSummary();
   } catch (_) { /* ignore */ }
 }
@@ -444,8 +465,8 @@ function renderFiles() {
     const on = S.checked.has(f.name);
     return `<div class="frow ${on ? "" : "off"}" data-i="${i}">
       <input type="checkbox" ${on ? "checked" : ""} title="Use this file">
-      <span>${f.kind === "video" ? "🎞" : "🖼"}</span>
-      <span class="fn" title="${esc(f.name)}">${esc(f.name)}</span>
+      <span>${ficon(f)}</span>
+      <span class="fn" title="${esc(f.parts ? f.parts.join(" + ") : f.name)}">${esc(dname(f))}</span>
       <span class="badges">${f.roi && cropOn() ? `<span class="badge roi">area drawn</span>` : ""}${f.done ? `<span class="badge prev" title="${esc(f.output || "")}">done before · ${esc(f.done_info || "")}</span>` : ""}</span>
       <span class="fs">${fmtBytes(f.bytes)}</span></div>`;
   }).join("") || '<p class="muted">No files match.</p>';
@@ -464,8 +485,8 @@ function renderFiles() {
   // step 2: the selected files, to draw on
   $("#fileList").innerHTML = S.files.map((f, i) => [f, i]).filter(([f]) => S.checked.has(f.name)).map(([f, i]) => `
     <li data-i="${i}" class="${i === S.cur ? "active" : ""}">
-      <span>${f.roi ? "✅" : "⬜️"}</span><span>${f.kind === "video" ? "🎞" : "🖼"}</span>
-      <span class="fname" title="${esc(f.name)}">${esc(f.name)}</span><span></span>
+      <span>${f.roi ? "✅" : "⬜️"}</span><span>${ficon(f)}</span>
+      <span class="fname" title="${esc(f.parts ? f.parts.join(" + ") : f.name)}">${esc(f.label || f.name)}</span><span></span>
       <span class="fsub">${f.roi ? (f.roi.shape === "full" ? "whole picture" : f.roi.shape) : "no area yet"}</span>
     </li>`).join("");
   $$("#fileList li").forEach((li) => (li.onclick = () => openFile(+li.dataset.i)));
@@ -480,12 +501,20 @@ $("#chkAll").onchange = (e) => {
 $("#fileFilter").onchange = (e) => { S.filter = e.target.value; renderFiles(); };
 
 // ============================================================================ steps: one thing at a time
-const STEP_NAME = { files: "Files", draw: "Draw areas", settings: "Settings", process: "Review & process", done: "Done" };
-const stepList = () => ["files", ...(cropOn() ? ["draw"] : []), "settings", "process", "done"];
+const STEP_NAME = { join: "Join videos", files: "Files", draw: "Draw areas", settings: "Settings", process: "Review & process", done: "Done" };
+const stepList = () => [...(joinOn() ? ["join"] : []), "files", ...(cropOn() ? ["draw"] : []), "settings", "process", "done"];
 function missingAreas() { return cropOn() ? selectedFiles().filter((f) => !f.roi) : []; }
 function stepProblem(step) {
   // why you can't go past this step yet ("" = fine)
-  if (step === "files" && !selectedFiles().length) return "Select at least one file.";
+  if (step === "join") {
+    if (!S.join) return "Loading…";
+    if (!S.join.groups.length) return onlyJoin() ? "Make at least one group of videos to join." : "";
+    const half = S.join.groups.find((g) => g.parts.length < 2);
+    if (half) return `Add at least 2 videos to “${esc(half.name || "the new group")}” (or remove it).`;
+    const bad = S.join.groups.find((g) => g.problems && g.problems.length);
+    if (bad) return `“${esc(bad.name)}” can't be joined: ${esc(bad.problems.join(", "))}.`;
+  }
+  if (step === "files" && !selectedFiles().length) return onlyJoin() ? "Select at least one joined video." : "Select at least one file.";
   if (step === "draw") {
     const m = missingAreas().length;
     if (m && !S.allowMissing) return `${m} file${m === 1 ? "" : "s"} still without an area.`;
@@ -526,6 +555,8 @@ function updateNav() {
   } else if (S.step === "draw" && missingAreas().length) {
     note = `${missingAreas().length} file(s) without area will be ${S.settings.no_roi === "full" ? "processed whole" : "skipped"}.`;
   } else if (S.step === "files" && !prob) note = `${selectedFiles().length} file${selectedFiles().length === 1 ? "" : "s"} selected`;
+  else if (S.step === "join" && !prob) note = S.join.groups.length
+    ? `${S.join.groups.length} video${S.join.groups.length === 1 ? "" : "s"} will be joined` : "No groups – nothing will be joined.";
   $("#stepNote").innerHTML = note;
   const b = $("#btnAllowMissing");
   if (b) b.onclick = () => { S.allowMissing = true; updateNav(); renderStepper(); };
@@ -550,6 +581,7 @@ function goStep(step) {
     requestAnimationFrame(() => { resizeCanvas(); fitView(); });
   }
   if (step === "process") renderReview();
+  if (step === "join") (S.join ? renderJoin() : loadJoins());
   if (step === "done") renderDone();
   updateNav();
 }
@@ -563,8 +595,132 @@ async function leaveFile() {
   if (S.cur < 0 || !S.dirty || !cropOn()) return true;
   const roi = roiFromPoints(S.shape, S.pts);
   if (!roi) return true;
-  if (confirm(`Save the area you drew on "${S.files[S.cur].name}" before leaving it?`)) return await saveRoi();
+  if (confirm(`Save the area you drew on "${dname(S.files[S.cur])}" before leaving it?`)) return await saveRoi();
   return true;
+}
+
+// ============================================================================ step: join split recordings
+// S.join = { videos: [{name, duration, size, fps, codec, created}], groups: [{name, parts, problems}], suggestions, sel }
+async function loadJoins() {
+  if (!S.folder) return;
+  try {
+    const d = await api("/api/joins?" + qs({ folder: S.folder }));
+    S.join = { videos: d.videos, groups: d.groups, suggestions: d.suggestions, unreadable: d.unreadable, sel: 0 };
+    // first time in this folder: use the suggestions straight away (they can be changed or removed)
+    if (!d.saved && !d.groups.length && d.suggestions.length) {
+      S.join.groups = d.suggestions.map((g) => ({ name: g.name, parts: [...g.parts], why: g.why }));
+      await saveJoins();
+      toast(`✨ Found ${d.suggestions.length} split recording${d.suggestions.length === 1 ? "" : "s"} – check the groups.`, false, 5000);
+    }
+  } catch (e) { toast(e.message, true); S.join = { videos: [], groups: [], suggestions: [], sel: 0 }; }
+  if (S.step === "join") renderJoin();
+  updateNav();
+}
+let joinTimer;
+async function saveJoins(later = false) {
+  clearTimeout(joinTimer);
+  if (later) { joinTimer = setTimeout(() => saveJoins(), 500); return; }
+  const J = S.join; if (!J) return;
+  try {
+    const full = J.groups.filter((g) => g.parts.length >= 2);
+    const d = await api("/api/joins", { folder: S.folder, groups: full.map((g) => ({ name: g.name, parts: g.parts })) });
+    d.groups.forEach((g, k) => { if (full[k]) full[k].problems = g.problems; });
+    await refreshFiles();
+  } catch (e) { toast(e.message, true); }
+  if (S.step === "join") renderJoin();
+  updateNav();
+}
+const vidInfo = (n) => (S.join.videos || []).find((v) => v.name === n) || {};
+const fmtDur = (s) => { s = Math.round(s || 0); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0"); };
+const fmtCreated = (c) => { if (!c) return ""; const d = new Date(c); return isNaN(d) ? "" : d.toLocaleString([], { dateStyle: "short", timeStyle: "medium" }); };
+function uniqueGroupName(base, skip) {
+  const taken = new Set(S.join.groups.filter((g) => g !== skip).map((g) => g.name.toLowerCase()));
+  let n = base, k = 2;
+  while (taken.has(n.toLowerCase())) n = `${base}_${k++}`;
+  return n;
+}
+function renderJoin() {
+  const J = S.join; if (!J) return;
+  const groupOf = {};
+  J.groups.forEach((g, gi) => g.parts.forEach((n) => (groupOf[n] = gi)));
+  J.sel = Math.min(J.sel, J.groups.length - 1);
+  $("#joinGroups").innerHTML = J.groups.length ? J.groups.map((g, gi) => {
+    const tot = g.parts.reduce((a, n) => a + (vidInfo(n).duration || 0), 0);
+    const warn = g.parts.length < 2 ? "add at least one more video" : (g.problems || []).join(", ");
+    let start = 0;
+    return `<div class="jgroup ${gi === J.sel ? "sel" : ""} ${warn ? "bad" : ""}" data-g="${gi}">
+      <div class="jghead"><span>🔗</span><input type="text" value="${esc(g.name)}" data-g="${gi}" title="Name of the joined video" spellcheck="false">
+        <button class="ghost small" data-del="${gi}" title="Remove this group (the videos stay separate)">🗑</button></div>
+      ${g.parts.map((n, k) => { const v = vidInfo(n), st = start; start += v.duration || 0;
+        return `<div class="jpart"><span class="pn">${k + 1}</span><span class="pnm" title="${esc(n)}">${esc(n)}</span>
+          <span class="pt" title="starts at ${fmtDur(st)} in the joined video">${fmtDur(st)} → ${fmtDur(start)}</span>
+          <span class="pb"><button data-mv="${gi}:${k}:-1" ${k ? "" : "disabled"} title="Earlier">↑</button><button data-mv="${gi}:${k}:1" ${k < g.parts.length - 1 ? "" : "disabled"} title="Later">↓</button><button data-rm="${gi}:${k}" title="Take out of the group">✕</button></span></div>`; }).join("")}
+      <div class="jgfoot"><span>${g.parts.length} parts · ${fmtDur(tot)} in total</span>${g.why ? `<span>suggested from ${esc(g.why)}</span>` : ""}
+        ${warn ? `<span class="warn">⚠ ${esc(warn)}</span>` : ""}</div></div>`;
+  }).join("") : `<div class="jempty"><b>No groups yet.</b><br>Press <b>✨ Suggest groups</b>, or <b>＋ New group</b> and add videos from the list.
+      ${onlyJoin() ? "" : "<br><small>Without groups nothing is joined – that's fine too.</small>"}</div>`;
+  $("#joinVids").innerHTML = (J.videos || []).map((v) => {
+    const gi = groupOf[v.name], meta = [fmtDur(v.duration), v.size ? v.size.join("×") : "", v.fps ? (+v.fps).toFixed(2).replace(/\.?0+$/, "") + " fps" : "", fmtCreated(v.created)].filter(Boolean).join(" · ");
+    return `<div class="jvid ${gi !== undefined ? "used" : ""}"><span class="vn" title="${esc(v.name)}">${esc(v.name)}<small>${meta}${gi !== undefined ? ` · in “${esc(J.groups[gi].name)}”` : ""}</small></span>
+      <button data-add="${esc(v.name)}" ${gi === J.sel && J.groups.length ? "disabled" : ""} title="Add to the selected group">＋</button></div>`;
+  }).join("") || '<p class="small muted">No videos in this folder.</p>';
+  $("#joinVidsHint").textContent = J.groups.length ? `＋ adds a video to “${J.groups[J.sel].name || "the selected group"}”.` : "＋ starts a new group with that video.";
+  const nv = (J.videos || []).length;
+  $("#joinNote").classList.toggle("hidden", !(J.unreadable && J.unreadable.length));
+  $("#joinNote").innerHTML = J.unreadable && J.unreadable.length ? `Could not read: ${J.unreadable.map(esc).join(", ")}` : "";
+  $("#joinSub").innerHTML = `Each group becomes <b>one video</b>: its parts are played one after the other, in this order. ` +
+    (onlyJoin() ? "Only joining: nothing is re-encoded." : "Then it is treated like any other video (one area, one result).") +
+    (nv ? ` <span class="muted">${nv} video${nv === 1 ? "" : "s"} in the folder.</span>` : "");
+  // events
+  $$("#joinGroups .jgroup").forEach((el) => (el.onclick = (e) => { if (e.target.closest("button,input")) return; J.sel = +el.dataset.g; renderJoin(); }));
+  $$("#joinGroups input[data-g]").forEach((inp) => {
+    inp.onfocus = () => { if (J.sel !== +inp.dataset.g) { J.sel = +inp.dataset.g; $$("#joinGroups .jgroup").forEach((x) => x.classList.toggle("sel", +x.dataset.g === J.sel)); } };
+    inp.oninput = () => { const g = J.groups[+inp.dataset.g]; g.name = inp.value.trim().replace(/[\\/:*?"<>|]+/g, "_"); saveJoins(true); };
+    inp.onchange = () => { const g = J.groups[+inp.dataset.g]; g.name = uniqueGroupName(g.name || "joined", g); saveJoins(); };
+  });
+  $$("[data-del]").forEach((b) => (b.onclick = () => { J.groups.splice(+b.dataset.del, 1); J.sel = Math.max(0, J.sel - 1); saveJoins(); renderJoin(); }));
+  $$("[data-mv]").forEach((b) => (b.onclick = () => {
+    const [gi, k, d] = b.dataset.mv.split(":").map(Number), P = J.groups[gi].parts;
+    [P[k], P[k + d]] = [P[k + d], P[k]]; delete J.groups[gi].why; saveJoins(); renderJoin();
+  }));
+  $$("[data-rm]").forEach((b) => (b.onclick = () => {
+    const [gi, k] = b.dataset.rm.split(":").map(Number);
+    J.groups[gi].parts.splice(k, 1); delete J.groups[gi].why;
+    if (!J.groups[gi].parts.length) J.groups.splice(gi, 1);
+    saveJoins(); renderJoin();
+  }));
+  $$("[data-add]").forEach((b) => (b.onclick = () => joinAdd(b.dataset.add)));
+}
+function joinAdd(name) {
+  const J = S.join;
+  J.groups.forEach((g) => (g.parts = g.parts.filter((n) => n !== name)));
+  J.groups = J.groups.filter((g, gi) => g.parts.length || gi === J.sel);
+  if (!J.groups.length) { J.groups.push({ name: "", parts: [] }); J.sel = 0; }
+  const g = J.groups[Math.min(J.sel, J.groups.length - 1)];
+  g.parts.push(name); delete g.why;
+  if (!g.name) g.name = uniqueGroupName(name.replace(/\.[^.]+$/, "") + "_joined", g);
+  saveJoins(); renderJoin();
+}
+$("#btnJoinNew").onclick = () => {
+  const J = S.join; if (!J) return;
+  const empty = J.groups.findIndex((g) => !g.parts.length);
+  if (empty >= 0) J.sel = empty; else { J.groups.push({ name: "", parts: [] }); J.sel = J.groups.length - 1; }
+  renderJoin(); toast("Now add the videos with ＋, in the order they were recorded.");
+};
+$("#btnJoinSuggest").onclick = async () => {
+  await loadJoinsOnly();
+  const J = S.join, sug = J.suggestions || [];
+  if (!sug.length) return toast("No split recordings found from the names or recording times. Make a group by hand: ＋ New group.", false, 6000);
+  const key = (gs) => JSON.stringify(gs.filter((g) => g.parts.length).map((g) => g.parts));
+  if (key(J.groups) === key(sug)) return toast("The groups already match the suggestions.");
+  if (J.groups.some((g) => g.parts.length) && !confirm(`Replace your groups with the ${sug.length} suggested one${sug.length === 1 ? "" : "s"}?`)) return;
+  J.groups = sug.map((g) => ({ name: g.name, parts: [...g.parts], why: g.why })); J.sel = 0;
+  await saveJoins(); renderJoin();
+};
+async function loadJoinsOnly() {   // fresh suggestions (files may have been added), keeping the groups as they are
+  try { const d = await api("/api/joins?" + qs({ folder: S.folder })); S.join.videos = d.videos; S.join.suggestions = d.suggestions; }
+  catch (e) { toast(e.message, true); }
 }
 
 // ============================================================================ open a file / frames
@@ -588,7 +744,7 @@ async function openFile(i) {
   const meta = S.info.kind === "video"
     ? `${S.W}×${S.H} · ${S.info.fps ?? "?"} fps · ${fmtTime(S.info.duration || 0)} · ${S.info.codec || ""}`
     : `${S.W}×${S.H} · image`;
-  $("#fileTitle").innerHTML = `<b>${esc(f.name)}</b> · ${meta} · ${fmtBytes(f.bytes)} <span class="muted">(${i + 1}/${S.files.length})</span>`;
+  $("#fileTitle").innerHTML = `<b>${esc(dname(f))}</b> · ${meta} · ${fmtBytes(f.bytes)} <span class="muted">(${i + 1}/${S.files.length})</span>`;
   $("#frameBar").classList.toggle("hidden", S.info.kind !== "video");
   if (S.info.kind === "video") {
     const n = S.info.times.length;
@@ -610,7 +766,9 @@ function loadImage(url) {
 }
 function frameLabel() {
   const t = S.info.times[S.frameIdx], n = S.info.times.length;
-  $("#frameLabel").textContent = `${S.frameIdx + 1}/${n} · ${fmtTime(t)} / ${fmtTime(S.info.duration || 0)}` + (S.fullRes ? " · full res" : "");
+  const part = (S.info.parts || []).filter((p) => p.start <= t + 1e-6).pop();
+  $("#frameLabel").textContent = `${S.frameIdx + 1}/${n} · ${fmtTime(t)} / ${fmtTime(S.info.duration || 0)}` +
+    (part ? ` · part ${S.info.parts.indexOf(part) + 1}: ${part.name}` : "") + (S.fullRes ? " · full res" : "");
 }
 async function showFrame(k, gen = S.gen, first = false) {
   S.frameIdx = k; $("#frameSlider").value = k; S.fullRes = false; frameLabel();
@@ -817,6 +975,7 @@ function fillSettings(s) {
   NUM.forEach((k) => ($("#s_" + k).value = s[k]));
   SEL.forEach((k) => ($("#s_" + k).value = s[k]));
   CHK.forEach((k) => ($("#s_" + k).checked = !!s[k]));
+  $(`input[name=frame][value=${s.uniform ? "same" : "area"}]`).checked = true;
   $("#s_output_dir").value = s.output_dir || "";
   $(`input[name=resize_mode][value=${s.resize_mode}]`).checked = true;
   if (!s.fps) $("#s_fps").value = 10;
@@ -842,6 +1001,7 @@ function collectSettings() {
   NUM.forEach((k) => (s[k] = +$("#s_" + k).value));
   SEL.forEach((k) => (s[k] = $("#s_" + k).value));
   CHK.forEach((k) => (s[k] = $("#s_" + k).checked));
+  if (cropOn()) s.uniform = $("input[name=frame]:checked").value === "same";
   s.output_dir = $("#s_output_dir").value.trim();
   s.resize_mode = $("input[name=resize_mode]:checked").value;
   const bg = $("input[name=bg]:checked").value;
@@ -857,7 +1017,7 @@ async function saveSettings(partial) {
   } catch (e) { toast(e.message, true); }
 }
 function onSettingChange() { clearTimeout(saveTimer); saveTimer = setTimeout(() => saveSettings(collectSettings()), 250); }
-$$("[id^=s_], input[name=bg], input[name=resize_mode], #bgColor").forEach((el) => {
+$$("[id^=s_], input[name=bg], input[name=resize_mode], input[name=frame], #bgColor").forEach((el) => {
   if (el.id.startsWith("s_update_")) return;
   el.addEventListener("change", onSettingChange);
 });
@@ -880,6 +1040,7 @@ $("#btnReset").onclick = async () => {
 };
 function describeTasks(s) {
   const t = s.tasks, parts = [];          // in the order they are applied
+  if (t.join) parts.push("join");
   if (t.fps) parts.push(`${s.fps} fps`);
   if (t.crop) parts.push("crop");
   if (t.resize) parts.push(s.resize_mode === "percent" ? `resize ${s.percent}%` :
@@ -901,15 +1062,18 @@ function planFiles() {
 function renderReview() {
   const s = S.settings, t = s.tasks, use = planFiles();
   const nv = use.filter((f) => f.kind === "video").length, ni = use.length - nv;
-  const lines = [];
+  const lines = [], nj = use.filter((f) => f.parts).length;
   lines.push(["📁", `${use.length} file${use.length === 1 ? "" : "s"} (${nv} video${nv === 1 ? "" : "s"}, ${ni} image${ni === 1 ? "" : "s"})`,
     `from “${esc(baseName(S.folder))}”` + (selectedFiles().length > use.length ? ` · ${selectedFiles().length - use.length} without area skipped` : "")]);
+  if (t.join) lines.push(["🔗", nj ? `Join ${nj} split recording${nj === 1 ? "" : "s"}` : "Join: no joined videos selected",
+    (onlyJoin() ? "parts copied one after the other – nothing re-encoded, pictures unchanged" : "parts played one after the other, then the steps below run on the whole video") +
+    (nj ? " · " + use.filter((f) => f.parts).map((f) => `${esc(f.label)} = ${f.parts.length} parts`).join(", ") : "")]);
   if (t.fps) lines.push(["⏱", `Frame rate → ${s.fps} fps`, "frames are picked (the one closest to every 1/" + s.fps + " s), never blended" + (nv ? "" : " · no videos selected, nothing to change")]);
   if (t.crop) lines.push(["✂️", "Crop to the areas you drew", "pixels inside copied exactly · outside " + (s.background === "transparent" ? "transparent" : esc(s.background))]);
   if (t.resize) lines.push(["⤡", s.resize_mode === "percent" ? `Resize to ${s.percent} %` : s.resize_mode === "exact" ? `Resize to exactly ${s.out_w} × ${s.out_h} px` : `Resize to fit in ${s.out_w} × ${s.out_h} px`,
     "shrinking: area averaging · enlarging: bicubic" + (s.resize_mode === "exact" ? ` · ${({ pad: "borders added", fill: "edges cut", stretch: "stretched" })[s.exact_fit]}` : "")]);
-  const fmt = s.background === "transparent" ? (s.transparent_video_format === "mov" ? "videos .mov (ProRes)" : "videos .webm") : `videos MP4 (H.264, quality ${s.crf})`;
-  lines.push(["💾", `Save to “${esc(baseName(S.outputDir))}”`, `${fmt} · images ${s.image_format === "same" ? "same type" : s.image_format.toUpperCase()}${s.audio ? " · sound kept" : ""}`]);
+  const fmt = onlyJoin() ? "same format as the parts (no re-encoding)" : s.background === "transparent" ? (s.transparent_video_format === "mov" ? "videos .mov (ProRes)" : "videos .webm") : `videos MP4 (H.264, quality ${s.crf})`;
+  lines.push(["💾", `Save to “${esc(baseName(S.outputDir))}”`, `${fmt}${ni ? ` · images ${s.image_format === "same" ? "same type" : s.image_format.toUpperCase()}` : ""}${nv && s.audio ? " · sound kept" : ""}`]);
   $("#review").innerHTML = lines.map(([ic, b, sm], i) => `<div class="rline"><span class="rn">${i ? i : ic}</span><div><b>${b}</b><small>${sm}</small></div></div>`).join("");
   // files that already have a result
   const prev = use.filter((f) => f.done);
@@ -918,7 +1082,7 @@ function renderReview() {
   if (prev.length) {
     const choice = S.existing || "skip";
     box.innerHTML = `<h3>⚠️ ${prev.length} of these file${prev.length === 1 ? " was" : "s were"} already processed before</h3>
-      <ul>${prev.slice(0, 50).map((f) => `<li>${esc(f.name)} → ${esc(f.output || "")} <span class="muted">(${esc(f.done_info || "")})</span></li>`).join("")}</ul>
+      <ul>${prev.slice(0, 50).map((f) => `<li>${esc(dname(f))} → ${esc(f.output || "")} <span class="muted">(${esc(f.done_info || "")})</span></li>`).join("")}</ul>
       <label><input type="radio" name="existing" value="skip" ${choice === "skip" ? "checked" : ""}><span><b>Skip them</b> – ${use.length - prev.length ? `only process the ${use.length - prev.length} new file${use.length - prev.length === 1 ? "" : "s"}` : "nothing new to process"}
         <small>The earlier results stay as they are.</small></span></label>
       <label><input type="radio" name="existing" value="replace" ${choice === "replace" ? "checked" : ""}><span><b>Process them again</b> and replace the earlier results
@@ -956,7 +1120,7 @@ function renderDone() {
       <button class="ghost" id="dnAgain">Change settings &amp; run again</button>
     </div>
     <div class="donelist">${r.jobs.map((j) => `<div class="drow ${j.status}">
-      <span>${j.kind === "video" ? "🎞" : "🖼"}</span><span class="dn">${esc(j.name)} → ${esc(j.output)}</span>
+      <span>${ficon(j)}</span><span class="dn">${esc(j.label || j.name)}${j.parts ? ` <small class="muted">(${j.parts.length} parts)</small>` : ""} → ${esc(j.output)}</span>
       <span class="ds">${label[j.status] || j.status}${j.status === "failed" ? ": " + esc(j.text || "") : ""}</span></div>`).join("")}</div>
     <p class="small muted" style="margin-top:12px">The crop, scale and methods used for each file are saved in
       <code>processing_params.json</code> in the results folder.</p>`;
@@ -992,7 +1156,7 @@ function renderJobs(jobs, busy) {
     const pct = Math.round((j.progress || 0) * 100);
     const label = { queued: "waiting", running: `${pct}%`, done: "✔ done", failed: "✖ failed", skipped: "skipped", cancelled: "cancelled" }[j.status];
     return `<div class="job ${j.status}">
-      <div class="jl"><span class="jn" title="${esc(j.name)} → ${esc(j.output)}">${j.kind === "video" ? "🎞" : "🖼"} ${esc(j.name)}</span><span>${label}</span></div>
+      <div class="jl"><span class="jn" title="${esc(j.label || j.name)} → ${esc(j.output)}">${ficon(j)} ${esc(j.label || j.name)}</span><span>${label}</span></div>
       <div class="bar"><div style="width:${j.status === "running" || j.status === "done" ? pct : 0}%"></div></div>
       <div class="jt" title="${esc(j.text || "")}">${esc(j.text || "")}${eta}</div></div>`;
   }).join("");
@@ -1074,7 +1238,7 @@ $("#btnQuit").onclick = $("#btnQuit2").onclick = async () => {
 
 // ============================================================================ home & tasks
 function renderChips() {
-  const t = T(), names = { crop: "Crop", resize: "Resize", fps: "Frame rate" };
+  const t = T(), names = { join: "Join", crop: "Crop", resize: "Resize", fps: "Frame rate" };
   $("#taskChips").innerHTML = Object.keys(names).filter((k) => t[k]).map((k) => `<span class="chip">${names[k]}</span>`).join("") ||
     '<span class="chip off">nothing</span>';
 }
@@ -1084,28 +1248,35 @@ function applyTasks() {
   $("#cardCrop").classList.toggle("hidden", !t.crop);
   $("#cardResize").classList.toggle("hidden", !t.resize);
   $("#cardFps").classList.toggle("hidden", !t.fps);
-  const exact = t.resize && s.resize_mode === "exact";
-  // "same size for all" is implied by an exact size
-  $("#s_uniform").closest("label").classList.toggle("hidden", exact);
+  const exact = t.resize && s.resize_mode === "exact", fit = t.resize && s.resize_mode === "fit";
+  document.body.classList.toggle("joinonly", onlyJoin());
+  // the size of the results: with Crop it's chosen in the Crop card ("just the area" / "same frame"); without Crop the
+  // same-size option sits in Resize; exact size implies it. Just the area and no Resize = no size to set at all.
+  $("#fsFrame").classList.toggle("hidden", !t.crop || exact);
+  $("#uniformRow").classList.toggle("hidden", t.crop || !t.resize || exact);
+  $("#uniformTxt").textContent = fit ? `Every result exactly ${s.out_w} × ${s.out_h} (borders added)` : "Every result the same size (of the biggest one)";
+  $("#sizeLbl").textContent = exact ? "Size of every result" : fit && s.uniform ? "Frame size (every result)" : "Maximum size";
+  $("#frameNote").textContent = !t.crop || exact ? "" : s.uniform
+    ? (fit ? `Every result is ${s.out_w} × ${s.out_h} px, the area centred.` : "Every result gets the size of the biggest area, the area centred.")
+    : t.resize ? "Each result is just its area, shrunk to the size set in Resize – no borders, sizes can differ."
+    : "Each result is just its area at its original pixels – no borders, no size to set.";
   // the background choice lives in the Crop card; without crop it moves to "Save to" (for borders)
   const bg = $("#fsBackground");
   if (t.crop && bg.parentElement.id !== "cardCrop") $("#cardCrop h3").after(bg);
   if (!t.crop && bg.parentElement.id !== "bgHolder") $("#bgHolder").appendChild(bg);
-  bg.classList.toggle("hidden", !(t.crop || exact || s.uniform));
+  bg.classList.toggle("hidden", !(t.crop || exact || (t.resize && s.uniform)));
   $("#transpOpts").classList.toggle("hidden", s.background !== "transparent");
-  $("#uniformNote").textContent = exact ? "" : s.uniform
-    ? (t.resize && s.resize_mode === "fit" ? `Every result is ${s.out_w} × ${s.out_h}, the picture centred.` : "Every result gets the size of the biggest one.")
-    : "Each result is only as big as its own picture.";
+
   $("#drawInfo").dataset.help = t.crop ? "draw" : "preview";
   updateAreaMode();
-  $("#settingsSub").textContent = "Done in this order: " + ["fps", "crop", "resize"].filter((k) => t[k])
-    .map((k) => ({ fps: "frame rate", crop: "crop", resize: "resize" }[k])).concat(["save"]).join(" → ");
+  $("#settingsSub").textContent = "Done in this order: " + ["join", "fps", "crop", "resize"].filter((k) => t[k])
+    .map((k) => ({ join: "join", fps: "frame rate", crop: "crop", resize: "resize" }[k])).concat(["save"]).join(" → ");
   renderChips(); renderFiles(); renderRunSummary(); draw();
 }
 function renderHome() {
   const t = T();
   $$(".task[data-task]").forEach((b) => b.classList.toggle("on", !!t[b.dataset.task]));
-  const any = t.crop || t.resize || t.fps;
+  const any = anyTask();
   $("#continueRow").classList.toggle("hidden", !S.folder);
   $("#btnContinue").disabled = !any;
   $("#btnContinue").textContent = any ? `Continue with “${baseName(S.folder || "")}” →` : "Pick at least one thing to do";
@@ -1119,14 +1290,19 @@ function hideHome() {
   $("#home").classList.add("hidden");
   $("#folderPill").classList.toggle("hidden", !S.folder); $("#taskChips").classList.remove("hidden");
   applyTasks();
-  goStep(stepList().includes(S.step) ? S.step : "files");
+  goStep(stepList().includes(S.step) ? S.step : stepList()[0]);
 }
 $$(".task[data-task]").forEach((b) => (b.onclick = async () => {
   const k = b.dataset.task;
   await saveSettings({ tasks: { ...T(), [k]: !T()[k] } }); renderHome();
 }));
 $("#btnHome").onclick = $("#taskChips").onclick = $("#folderPill").onclick = showHome;
-$("#btnContinue").onclick = () => { if (!(T().crop || T().resize || T().fps)) return; hideHome(); };
+$("#btnContinue").onclick = async () => {
+  if (!anyTask()) return;
+  if (S.folder) await refreshFiles();
+  if (joinOn() && S.folder && !S.join) await loadJoins();
+  hideHome();
+};
 const RECIPES = {
   dlc: [{ tasks: { crop: true, resize: true, fps: true }, resize_mode: "fit", out_w: 720, out_h: 720, allow_upscale: false,
           uniform: true, scale_mode: "fit", background: "black", fps: 10, crf: 20, image_format: "same", no_roi: "skip", audio: false },

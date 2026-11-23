@@ -30,6 +30,11 @@
       <h1>What do you want to do?</h1>
       <p class="hm-sub">Pick one or more – CropKit does them together, in one go.
         <span class="info" data-help="order">i</span></p>
+      <button class="task jointask" data-task="join">
+        <span class="tcheck"></span><span class="ticon">🔗</span>
+        <span class="jt"><b>Join split videos</b><small>A recording that stopped and restarted (GoPro chapters, “…_suite”, part 1, 2…)
+          becomes one video – done first, before anything else <span class="info" data-help="task_join">i</span></small></span>
+      </button>
       <div class="tasks">
         <button class="task" data-task="crop">
           <span class="tcheck"></span><span class="ticon">✂️</span>
@@ -81,6 +86,28 @@
 <!-- ======================================================================= workspace: one step at a time -->
 <main id="workspace" class="workspace">
   <nav class="stepper" id="stepper"></nav>
+
+  <!-- step: join split recordings -->
+  <section class="pane" data-pane="join">
+    <div class="panecard wide">
+      <div class="panetitle">
+        <div><h2>Join split videos <span class="info" data-help="join">i</span></h2>
+          <p class="muted small" id="joinSub">Each group below becomes ONE video: its parts are played one after the other.</p></div>
+        <div class="spacer"></div>
+        <button id="btnJoinSuggest" title="Find split recordings again from names and recording times">✨ Suggest groups</button>
+        <button id="btnJoinNew" class="primary">＋ New group</button>
+      </div>
+      <div id="joinNote" class="note hidden"></div>
+      <div class="joinwrap">
+        <div class="joingroups" id="joinGroups"></div>
+        <aside class="joinvids">
+          <h3>Videos in the folder</h3>
+          <p class="small muted" id="joinVidsHint">Click ＋ to add a video to the selected group.</p>
+          <div id="joinVids"></div>
+        </aside>
+      </div>
+    </div>
+  </section>
 
   <!-- step: files -->
   <section class="pane" data-pane="files">
@@ -196,6 +223,14 @@
             <label title="any colour"><input type="radio" name="bg" value="custom"><input type="color" id="bgColor" value="#3060a0">colour</label>
           </div>
         </fieldset>
+        <fieldset id="fsFrame">
+          <label class="lbl">Size of the result <span class="info" data-help="uniform">i</span></label>
+          <label class="radio"><input type="radio" name="frame" value="area"><span><b>Just the area</b>
+            <small>the smallest rectangle around it – each file as big as its own area</small></span></label>
+          <label class="radio"><input type="radio" name="frame" value="same"><span><b>Same frame for every file</b>
+            <small>area centred, borders around it – needed for DeepLabCut</small></span></label>
+          <div class="small muted" id="frameNote"></div>
+        </fieldset>
         <div class="how" id="howCrop"></div>
         <details class="more">
           <summary>More options</summary>
@@ -224,6 +259,7 @@
           <label><input type="radio" name="resize_mode" value="percent"><span>Percent</span></label>
         </div>
         <div class="boxopts">
+          <label class="lbl" id="sizeLbl">Size</label>
           <div class="inline sizeinputs">
             <input type="number" id="s_out_w" min="16" step="2"> × <input type="number" id="s_out_h" min="16" step="2"> px
             <select id="sizePreset" title="Common sizes">
@@ -250,6 +286,8 @@
           <input type="number" id="s_percent" min="1" max="1000" step="1"> % <span class="small muted">(50 = half)</span>
         </div>
         <p class="small muted hint" id="resizeHint"></p>
+        <label class="chk row" id="uniformRow"><input type="checkbox" id="s_uniform"> <span id="uniformTxt">Every result the same size</span>
+          <span class="info" data-help="uniform">i</span></label>
         <div class="how" id="howResize"></div>
         <details class="more fitopts">
           <summary>More options</summary>
@@ -273,10 +311,8 @@
         <div class="how" id="howSave"></div>
         <details class="more">
           <summary>More options</summary>
-          <label class="chk row"><input type="checkbox" id="s_uniform"> All results the same size
-            <span class="info" data-help="uniform">i</span></label>
-          <div class="small muted" id="uniformNote"></div>
           <div id="bgHolder"></div>
+          <div class="notjoin">
           <label class="lbl">Images saved as <span class="info" data-help="image_format">i</span></label>
           <select id="s_image_format">
             <option value="same">same type as the original</option>
@@ -290,6 +326,7 @@
           <label class="lbl">Video quality <span id="crfVal" class="mono small"></span> <span class="info" data-help="crf">i</span></label>
           <input type="range" id="s_crf" min="14" max="32" step="1">
           <div class="rangelabels small muted"><span>best</span><span>smallest file</span></div>
+          </div>
           <label class="chk row"><input type="checkbox" id="s_audio"> Keep the sound of videos</label>
           <button id="btnUseDefaultOut" class="linklike small">Use the default folder (“cropped” inside your folder)</button>
         </details>
