@@ -217,11 +217,17 @@ def _mac_bundle(dest: Path, port: int, log: Path, version: str) -> Path:
     return app
 
 
+def _win_pythonw() -> Path:
+    """The windowless Python of the environment CropKit is running in (start.bat keeps it in
+    %USERPROFILE%\\.cropkit\\venv, versions before 1.9.1 in .venv inside the CropKit folder)."""
+    for p in (Path(sys.executable).with_name("pythonw.exe"), APP_DIR / ".venv" / "Scripts" / "pythonw.exe"):
+        if p.exists():
+            return p
+    return Path(sys.executable)
+
+
 def _win_shortcuts(port: int) -> list[str]:
-    pyw = APP_DIR / ".venv" / "Scripts" / "pythonw.exe"
-    target = pyw if pyw.exists() else Path(sys.executable).with_name("pythonw.exe")
-    if not target.exists():
-        target = Path(sys.executable)
+    target = _win_pythonw()
     made = []
     for folder in ("Desktop", "Programs"):
         ps = (
@@ -248,8 +254,7 @@ def _win_shortcuts(port: int) -> list[str]:
 def _win_url_scheme(port: int):
     """cropkit://start starts CropKit (used by the installed app when CropKit isn't running)."""
     import winreg  # noqa: PLC0415 - Windows only
-    pyw = APP_DIR / ".venv" / "Scripts" / "pythonw.exe"
-    target = pyw if pyw.exists() else Path(sys.executable).with_name("pythonw.exe")
+    target = _win_pythonw()
     cmd = f'"{target}" "{APP_DIR / "app.py"}" --port {int(port)}'
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\cropkit") as k:
         winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "URL:CropKit")
@@ -368,8 +373,7 @@ def set_autostart(on: bool, port: int, log: Path) -> bool:
                            "StandardOutPath": str(log), "StandardErrorPath": str(log)}, f)
         return True
     if os.name == "nt":
-        pyw = APP_DIR / ".venv" / "Scripts" / "pythonw.exe"
-        target = pyw if pyw.exists() else Path(sys.executable).with_name("pythonw.exe")
+        target = _win_pythonw()
         ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut(%s);$s.TargetPath=%s;$s.Arguments=%s;"
               "$s.WorkingDirectory=%s;$s.WindowStyle=7;$s.Save()") % (
             _psq(path), _psq(target), _psq(f'"{APP_DIR / "app.py"}" --port {int(port)} --no-browser'), _psq(APP_DIR))

@@ -284,8 +284,8 @@ def _install_requirements(folder: Path, before: bytes | None) -> str:
     if r.returncode != 0:
         return ("New libraries could not be installed now; they will be installed the next time you start "
                 f"{APP_NAME} with the start file. " + (r.stderr or "")[-300:])
-    marker = folder / ".venv" / "requirements.installed"
-    if marker.parent.is_dir():
+    marker = Path(sys.prefix) / "requirements.installed"     # the environment CropKit runs in
+    if sys.prefix != sys.base_prefix and marker.parent.is_dir():
         shutil.copyfile(req, marker)
     return ""
 

@@ -52,8 +52,11 @@ You need **Python 3.10 or newer**. Everything else is installed automatically th
 
 ### Windows
 1. **Python**: install it from <https://www.python.org/downloads/> and tick **"Add python.exe to PATH"**.
-2. **Get CropKit** (Download ZIP and unzip, or `git clone`).
+2. **Get CropKit** (Download ZIP, then right-click it → **Extract All…**, or `git clone`). Put it in a normal folder
+   such as `C:\Users\<you>\CropKit` – better not inside OneDrive.
 3. **Double-click `start.bat`.** If SmartScreen warns you: *More info* → *Run anyway*.
+4. The first start shows its progress (1–3 minutes). CropKit's libraries are installed in `%USERPROFILE%\.cropkit\venv`,
+   outside the CropKit folder, so OneDrive or linked folders can't get in the way.
 
 ### Video support (ffmpeg)
 CropKit installs its own copy of ffmpeg (`imageio-ffmpeg`), so videos work out of the box. If you have ffmpeg
@@ -170,6 +173,12 @@ In the output folder:
 - `extras/DLC_video_prep.ipynb` is the same workflow as a Jupyter notebook, for scripting.
 
 ## 7. Troubleshooting
+
+- **Windows: “Actual environment location may have moved due to redirects, links or junctions” and nothing happens**
+  (CropKit before 1.9.1): the CropKit folder was in OneDrive, a linked folder, still inside the .zip, or Python came from the
+  Microsoft Store. Get the current version – start.bat now sets things up in `%USERPROFILE%\.cropkit\venv` and shows
+  the progress. You can delete the `.venv` folder inside the CropKit folder. If it still fails, install Python from
+  python.org (tick “Add python.exe to PATH”).
 
 - **A video failed** – the reason is shown under its progress bar; the full log is in `_logs/` in the output folder.
 - **Videos don't work / "ffmpeg not found"** – see *Help → System check*; install ffmpeg (`brew install ffmpeg`) and restart.

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.9.1
+- **Windows setup fixed**: start.bat could stop at “Actual environment location may have moved due to redirects, links
+  or junctions” (CropKit folder in OneDrive or a linked folder, run from inside the .zip, or Microsoft Store Python).
+  - CropKit's libraries are now installed in `%USERPROFILE%\.cropkit\venv`, outside the CropKit folder.
+  - The setup shows what it is doing and the download progress instead of a silent window.
+  - Clear message when start.bat is run from inside the .zip; if a separate environment can't be made, the libraries
+    are installed for your Python directly.
+  - Shortcuts, start at login and updates follow the new location.
+
 ## 1.9.0
 - **Join split videos** – a new task on Home, done first, before everything else: a recording that stopped and restarted
   (or a GoPro that cut it into chapters) becomes one video.
